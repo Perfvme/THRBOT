@@ -1,6 +1,5 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import config
 import data_fetcher
 import analysis
 import gemini_processor
@@ -9,7 +8,17 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 import ml_trainer
 import sqlite3
+from dotenv import load_dotenv
 import os
+import logging
+
+# Load environment variables from the .env file
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Initialize ML scheduler
 scheduler = BackgroundScheduler()
@@ -185,7 +194,7 @@ async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ ML Status Error: {str(e)}")
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_coin))
     app.add_handler(CommandHandler("mlstatus", ml_status))
