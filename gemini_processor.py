@@ -22,64 +22,104 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
 def validate_response(text):
-    """More flexible validation with case-insensitive checks"""
-    required_sections = [
-        "SCALP", 
-        "SWING", 
-        "Quantitative Confidence",
-        "AI Confidence",
-        "PRICE ACTION NOTES",
-        "CONFIDENCE GUARDRAILS"
+    """Flexible validation with pattern matching"""
+    patterns = [
+        r"SCALP", 
+        r"SWING", 
+        r"PRICE ACTION",
+        r"CONFIDENCE GUARDRAILS",
+        r"Quantitative Confidence",
+        r"AI Confidence"
     ]
-    
-    text_lower = text.lower()
-    return all(section.lower() in text_lower for section in required_sections)
+    return all(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+def format_fallback_analysis(symbol):
+    """Fallback template for failed AI analysis"""
+    return f"""🔍 ANALYSIS FAILED - MANUAL CHECK REQUIRED
+
+🚀 SCALP (5-15m)
+`Quantitative Confidence:` [VALUE]%
+`AI Confidence:` [VALUE]%
+`Strength:` [▲ High/► Medium/▼ Low] (ADX VALUE)  
+`Entry Strategy:` Manual Verification Needed
+`Ideal Entry:` N/A → N/A  
+`TP Levels:` N/A → N/A 
+`Stop:` N/A  
+
+🌙 SWING (1-4H)  
+`Quantitative Confidence:` [VALUE]%
+`AI Confidence:` [VALUE]%
+`Market Structure:` [...] 
+`Ideal Entry:` N/A → N/A  
+`TP Levels:` N/A → N/A  
+`SL:` N/A  
+
+⚠️ CONFIDENCE GUARDRAILS  
+- Verify volume and price action
+- Check macroeconomic factors
+- Confirm with on-chain data"""
+
+def sanitize_prompt(prompt):
+    """Remove problematic characters/terms"""
+    replacements = {
+        "SHORT": "DOWNTREND",
+        "LONG": "UPTREND",
+        "STOP LOSS": "RISK LEVEL",
+        "LIQUIDATION": "VOLUME CLUSTER"
+    }
+    for k, v in replacements.items():
+        prompt = prompt.replace(k, v)
+    return prompt
 
 def get_gemini_analysis(prompt):
     try:
-        truncated_prompt = textwrap.shorten(prompt, width=30000, placeholder="... [truncated]")
+        # Clean and truncate prompt
+        clean_prompt = sanitize_prompt(prompt)
+        truncated_prompt = textwrap.shorten(clean_prompt, width=15000, placeholder="... [truncated]")
         
+        # First attempt with full template
         response = model.generate_content(
-            f"""STRICT RESPONSE FORMAT REQUIRED! ANALYZE BEARISH/BULLISH FACTORS:
-
+            f"""STRICT FORMAT REQUIRED! ANALYZE THIS MARKET DATA:
 {truncated_prompt}
 
-*MANDATORY SECTIONS:*
+MANDATORY SECTIONS:
+1. 🚀 SCALP ANALYSIS
+2. 🌙 SWING ANALYSIS  
+3. 🔍 PRICE ACTION NOTES
+4. ⚠️ RISK FACTORS
 
-🚀 SCALP (5-15m)
-`Direction:` [LONG/SHORT/NONE]
-`Confidence:` [%] (Technical/ML)
-`Entry Zone:` LEVEL-LEVEL
-`Targets:` LEVEL → LEVEL 
-`Stop:` LEVEL
-
-🌙 SWING (1-4H)  
-`Direction:` [LONG/SHORT/NONE]
-`Confidence:` [%] (Technical/ML)
-`Key Levels:` Support: LEVEL | Resistance: LEVEL
-`Entry Zone:` LEVEL-LEVEL
-`Targets:` LEVEL-LEVEL
-`Stop:` LEVEL
-`Risk/Reward:` 1:X
-
-🔍 MARKET DYNAMICS
-1. Bullish Factors: [...] 
-2. Bearish Risks: [...]
-
-⚠️ ALERT: If conflicting signals, state: 'CONFLICTING SIGNALS - WAIT'"""
+INCLUDE THESE METRICS IN EACH SECTION:
+- Quantitative Confidence %
+- AI Confidence %
+- Key Levels
+- Volume Analysis""",
+            generation_config={"temperature": 0.4}
         )
-
+        
+        # First validation pass
         if validate_response(response.text):
             return response.text
-        else:
-            # Attempt recovery for common missing elements
-            recovery_text = response.text.replace("Quant Confidence", "Quantitative Confidence")
-            recovery_text = recovery_text.replace("AI Conf", "AI Confidence")
-            if validate_response(recovery_text):
-                return recovery_text
-            return "⚠️ AI generated incomplete analysis. Check technicals manually."
+            
+        # Retry with simplified prompt
+        retry_response = model.generate_content(
+            f"""SIMPLIFIED ANALYSIS OF:
+{truncated_prompt}
+
+USE THIS TEMPLATE:
+[SCALP] Direction|Confidence|Key Levels
+[SWING] Trend|Entry Zones|Risk
+[NOTES] Key Observations""",
+            generation_config={"temperature": 0.2}
+        )
+        
+        # Final validation check
+        if validate_response(retry_response.text):
+            return retry_response.text
+            
+        # Fallback to template
+        return format_fallback_analysis("UNKNOWN")
             
     except google_exceptions.InvalidArgument as e:
-        return f"❌ Message too long ({len(prompt)} chars). Max 30k characters."
+        return f"⚠️ Analysis truncated due to length constraints"
     except Exception as e:
-        return f"❌ API Error: {str(e)}"
+        return format_fallback_analysis("ERROR")
