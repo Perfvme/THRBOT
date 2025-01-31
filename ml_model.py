@@ -2,22 +2,33 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb
 import joblib
-import dask.dataframe as dd
-from dask.distributed import Client
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 import os
+from dask.distributed import Client
 
 class MLSystem:
     def __init__(self):
         self.model = None
-        self.client = Client(n_workers=1, threads_per_worker=2, memory_limit='4GB')
+        self.client = None
         self.features = [
             'RSI', 'EMA_20', 'EMA_50', 'MACD', 'VWAP', 'ADX',
             'funding_rate', 'open_interest', 'LIQUIDATION_IMPACT',
             'volatility_4h', 'EMA_diff', 'RSI_vol_corr'
         ]
         
+    def initialize_client(self):
+        """Initialize Dask client with proper settings"""
+        if self.client is None:
+            self.client = Client(
+                n_workers=1,
+                threads_per_worker=2,
+                memory_limit='4GB',
+                silence_logs=50,
+                dashboard_address=None
+            )
+        return self.client
+
     def feature_engineering(self, df):
         """Resource-efficient feature creation"""
         df = df.copy()
@@ -35,10 +46,13 @@ class MLSystem:
     def train(self):
         """Memory-constrained training pipeline"""
         try:
+            from dask import dataframe as dd
+            client = self.initialize_client()
+            
             ddf = dd.read_parquet('data/processed.parquet')
             ddf = ddf.map_partitions(self.feature_engineering)
             
-            if len(ddf) < 5000:  # Minimum data check
+            if len(ddf) < 5000:
                 return False
 
             # Time-series validation
@@ -70,9 +84,13 @@ class MLSystem:
         except Exception as e:
             print(f"Training error: {str(e)}")
             return False
+        finally:
+            if self.client:
+                self.client.close()
+                self.client = None
 
     def predict(self, current_data):
-        """RAM-friendly prediction"""
+        """RAM-friendly prediction with fallback"""
         try:
             if not self.model:
                 self.model = joblib.load('ml_model.pkl')
@@ -82,7 +100,8 @@ class MLSystem:
                 'confidence': float(proba[1]) * 100,
                 'uncertainty': float(np.abs(proba[1] - proba[0])) * 50
             }
-        except:
+        except Exception as e:
+            print(f"Prediction error: {str(e)}")
             return {'confidence': 50.0, 'uncertainty': 100.0}
 
 ml = MLSystem()
