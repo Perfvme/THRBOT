@@ -5,12 +5,17 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 import pickle
 import time
+import threading
 
 class MLModel:
     def __init__(self, model_path="ml_model.pkl"):
         self.model_path = model_path
         self.model = None
-        self.load_model()
+        try:
+            self.load_model()
+        except Exception as e:
+            print(f"Error initializing the model: {e}")
+            raise
 
     def load_model(self):
         try:
@@ -50,8 +55,16 @@ class MLModel:
         prediction = self.model.predict(X.iloc[[-1]])  # Predict based on the latest data point
         return prediction[0]  # Return predicted class (1 or 0)
 
+    def start_periodic_update(self, data, interval=86400):
+        def periodic_task():
+            while True:
+                self.update_model_periodically(data, interval)
+                time.sleep(3600)
+
+        update_thread = threading.Thread(target=periodic_task, daemon=True)
+        update_thread.start()
+
     def update_model_periodically(self, data: pd.DataFrame, interval=86400):
-        """Retrain the model at regular intervals (e.g., daily)."""
         last_update_time = 0
         while True:
             current_time = time.time()
@@ -59,4 +72,3 @@ class MLModel:
                 self.retrain_model(data)  # Retrain the model with new data
                 last_update_time = current_time
             time.sleep(3600)  # Sleep for 1 hour before checking again
-
