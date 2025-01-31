@@ -65,8 +65,8 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # ML prediction
                 ml_pred = ml.predict({
                     'RSI': ta['rsi'],
-                    'EMA_20': ta['ema'],
-                    'EMA_50': ta['ema50'],
+                    'EMA_20': ta.get('ema', ta.get('price', 0)),
+                    'EMA_50': ta.get('ema50', ta.get('price', 0)),
                     'MACD': ta['macd'],
                     'VWAP': ta['vwap'],
                     'ADX': ta['adx'],
