@@ -13,7 +13,7 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-genai.configure(api_key=config.GEMINI_API_KEY)
+genai.configure(api_key=os.getenv.("GEMINI_API_KEY")
 model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
 def validate_response(text):
