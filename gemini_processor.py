@@ -1,9 +1,9 @@
-# gemini_processor.py
 import google.generativeai as genai
 import textwrap
 from google.api_core import exceptions as google_exceptions
 from dotenv import load_dotenv
 import os
+import logging
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -13,7 +13,11 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-genai.configure(api_key=os.getenv.("GEMINI_API_KEY")
+if not all([TELEGRAM_TOKEN, BINANCE_API_KEY, BINANCE_SECRET_KEY, GEMINI_API_KEY]):
+    logging.error("One or more environment variables are missing. Check your .env file.")
+    exit(1)
+
+genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
 def validate_response(text):
