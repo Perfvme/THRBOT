@@ -5,7 +5,6 @@ import joblib
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 import os
-from dask.distributed import Client
 
 class MLSystem:
     def __init__(self):
@@ -17,37 +16,38 @@ class MLSystem:
             'volatility_4h', 'EMA_diff', 'RSI_vol_corr'
         ]
         
-    def initialize_client(self):
-        """Initialize Dask client with proper settings"""
+    def get_client(self):
+        """Initialize Dask client only when needed"""
         if self.client is None:
+            from dask.distributed import Client
             self.client = Client(
                 n_workers=1,
                 threads_per_worker=2,
                 memory_limit='4GB',
-                silence_logs=50,
-                dashboard_address=None
+                dashboard_address=None,
+                silence_logs=50
             )
         return self.client
 
     def feature_engineering(self, df):
-        """Resource-efficient feature creation"""
+        """Create advanced trading features"""
         df = df.copy()
-        # Lag features
+        # Lagged indicators
         for lag in [1, 3]:
             df[f'RSI_lag{lag}'] = df['RSI'].shift(lag)
-        # Volatility
+        # Volatility metrics
         df['log_ret'] = np.log(df['close']).diff()
         df['volatility_4h'] = df['log_ret'].rolling(12).std()
-        # Interactions
+        # Market regime features
         df['EMA_diff'] = df['EMA_20'] - df['EMA_50']
         df['RSI_vol_corr'] = df['RSI'].rolling(6).corr(df['volatility_4h'])
         return df.dropna()
 
     def train(self):
-        """Memory-constrained training pipeline"""
+        """Train model with error handling"""
         try:
             from dask import dataframe as dd
-            client = self.initialize_client()
+            client = self.get_client()
             
             ddf = dd.read_parquet('data/processed.parquet')
             ddf = ddf.map_partitions(self.feature_engineering)
@@ -56,11 +56,10 @@ class MLSystem:
                 return False
 
             # Time-series validation
-            tscv = TimeSeriesSplit(n_splits=3)
             X = ddf[self.features].compute()
             y = ddf['target'].compute()
 
-            # Model config optimized for 8GB RAM
+            # Model configuration
             self.model = lgb.LGBMClassifier(
                 n_estimators=150,
                 learning_rate=0.1,
@@ -70,30 +69,40 @@ class MLSystem:
                 random_state=42
             )
 
+            # Cross-validation
+            tscv = TimeSeriesSplit(n_splits=3)
             scores = []
             for train_idx, test_idx in tscv.split(X):
                 self.model.fit(X.iloc[train_idx], y.iloc[train_idx],
-                              eval_set=[(X.iloc[test_idx], y.iloc[test_idx])],
-                              early_stopping_rounds=15,
-                              verbose=-1)
+                             eval_set=[(X.iloc[test_idx], y.iloc[test_idx])],
+                             early_stopping_rounds=15,
+                             verbose=-1)
                 scores.append(roc_auc_score(y.iloc[test_idx], 
                                           self.model.predict_proba(X.iloc[test_idx])[:,1]))
 
             joblib.dump(self.model, 'ml_model.pkl')
             return np.mean(scores)
+            
         except Exception as e:
             print(f"Training error: {str(e)}")
             return False
         finally:
-            if self.client:
-                self.client.close()
-                self.client = None
+            self.close_client()
+
+    def close_client(self):
+        """Cleanup Dask resources"""
+        if self.client:
+            self.client.close()
+            self.client = None
 
     def predict(self, current_data):
-        """RAM-friendly prediction with fallback"""
+        """Safe prediction with fallback"""
         try:
             if not self.model:
-                self.model = joblib.load('ml_model.pkl')
+                try:
+                    self.model = joblib.load('ml_model.pkl')
+                except:
+                    return {'confidence': 50.0, 'uncertainty': 100.0}
                 
             proba = self.model.predict_proba(pd.DataFrame([current_data]))[0]
             return {
