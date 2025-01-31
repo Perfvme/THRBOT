@@ -6,6 +6,16 @@ import analysis
 import gemini_processor
 from binance.exceptions import BinanceAPIException
 from ml_model import MLModel
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from the .env file
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Initialize the ML Model
 ml_model = MLModel()
