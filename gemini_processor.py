@@ -106,8 +106,8 @@ INCLUDE THESE METRICS IN EACH SECTION:
 {truncated_prompt}
 
 USE THIS TEMPLATE:
-[SCALP] Direction|Confidence|Key Levels
-[SWING] Trend|Entry Zones|Risk
+[SCALP] Direction|Confidence|Key Levels|ideal entry|stop|target
+[SWING] Trend|Entry Zones|Risk|stop|target|confidence
 [NOTES] Key Observations""",
             generation_config={"temperature": 0.2}
         )
