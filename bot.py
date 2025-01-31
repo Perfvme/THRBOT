@@ -1,6 +1,4 @@
 import multiprocessing
-multiprocessing.set_start_method('spawn', force=True)
-
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import config
@@ -9,7 +7,7 @@ import analysis
 import gemini_processor
 from binance.exceptions import BinanceAPIException
 from apscheduler.schedulers.background import BackgroundScheduler
-from ml_model import ml
+from ml_model import MLSystem
 import textwrap
 import time
 import traceback
@@ -27,8 +25,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize ML system
+ml = MLSystem()
+
 def start_scheduler():
-    """Initialize scheduler with resource monitoring"""
+    """Initialize scheduler without Dask dependencies"""
     scheduler = BackgroundScheduler()
     scheduler.add_job(ml.train, 'interval', hours=24)
     scheduler.start()
@@ -36,7 +37,6 @@ def start_scheduler():
     return scheduler
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enhanced welcome message with system status"""
     try:
         health_status = "🟢 Operational" if ml.model else "🟡 Initializing"
         await update.message.reply_text(textwrap.dedent(f"""\
@@ -51,7 +51,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Start command error: {str(e)}")
 
 async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Robust analysis handler with circuit breaker"""
     try:
         if not context.args:
             await update.message.reply_text("❌ Please provide a coin symbol. Example: /analyze BTC")
@@ -61,28 +60,25 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         timeframes = ['5m', '15m', '1h', '4h', '1d']
         timeframe_data = {}
 
-        # Initial symbol check with retry
-        max_retries = 3
-        for attempt in range(max_retries):
+        # Data fetching with retries
+        for attempt in range(3):
             try:
                 df, error = data_fetcher.get_crypto_data(raw_symbol, '5m')
                 if error: raise ValueError(error)
                 break
             except Exception as e:
-                if attempt == max_retries - 1: raise
-                logger.warning(f"Data fetch attempt {attempt+1} failed: {str(e)}")
+                if attempt == 2: raise
                 time.sleep(2 ** attempt)
 
-        # Process timeframes with error isolation
+        # Process timeframes
         for tf in timeframes:
             try:
                 df, error = data_fetcher.get_crypto_data(raw_symbol, tf)
-                if error: raise ValueError(error)
+                if error: continue
                 
                 ta = analysis.analyze_data(df, raw_symbol)
-                if 'error' in ta: raise ValueError(ta['error'])
-                
-                # ML Prediction with fallback
+                if 'error' in ta: continue
+
                 ml_pred = ml.predict({
                     'RSI': ta['rsi'],
                     'EMA_20': ta['ema'],
@@ -104,50 +100,36 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeframe_data[tf] = ta
                 
             except Exception as tf_error:
-                logger.error(f"Timeframe {tf} analysis failed: {str(tf_error)}")
+                logger.error(f"Timeframe {tf} error: {str(tf_error)}")
                 continue
 
-        # Generate output
-        analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
+        # Generate analysis output
+        analysis_text = f"📊 *{raw_symbol} Analysis*\n\n"
         analysis_text += "```\nTF    | Price    | ML Conf | Uncertainty | Q-Conf\n"
         analysis_text += "-----------------------------------------------------\n"
         
         for tf in timeframes:
-            ta = timeframe_data.get(tf, {
-                'price': 0.0,
-                'ml_confidence': 50.0,
-                'ml_uncertainty': 100.0,
-                'quant_confidence': 50.0,
-                'ema50': 0.0
-            })
+            ta = timeframe_data.get(tf, {})
             analysis_text += (
                 f"{tf.upper().ljust(4)} "
-                f"| ${ta['price']:>7.2f} "
-                f"| {ta['ml_confidence']:>6.1f}% "
-                f"| ±{ta['ml_uncertainty']:>4.1f}% "
-                f"| {ta['quant_confidence']:>5.1f}%\n"
+                f"| ${ta.get('price',0):>7.2f} "
+                f"| {ta.get('ml_confidence',50):>6.1f}% "
+                f"| ±{ta.get('ml_uncertainty',100):>4.1f}% "
+                f"| {ta.get('quant_confidence',50):>5.1f}%\n"
             )
         analysis_text += "```\n\n"
 
-        # Key levels with fallback
-        try:
-            ema50_values = [ta['ema50'] for ta in timeframe_data.values()]
-            analysis_text += f"🔑 Key Levels:\n• Support: ${min(ema50_values):.2f}\n• Resistance: ${max(ema50_values):.2f}\n\n"
-        except:
-            analysis_text += "🔑 Key Levels: Data unavailable\n\n"
-
-        # AI recommendations
+        # Generate recommendations
         try:
             await update.message.reply_text("🔄 Generating AI recommendations...")
             recommendations = gemini_processor.get_gemini_analysis(analysis_text)
-        except Exception as ai_error:
-            recommendations = f"⚠️ AI Analysis Unavailable: {str(ai_error)}"
-            logger.error(f"Gemini failed: {str(ai_error)}")
+        except Exception as e:
+            recommendations = f"⚠️ AI Analysis Unavailable: {str(e)}"
 
         # Final message
         final_message = textwrap.dedent(f"""\
         📈 Final Analysis for {raw_symbol}:
-        {recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis:\\n" + recommendations}
+        {recommendations}
 
         🤖 ML Insights:
         - Average Confidence: {np.mean([t.get('ml_confidence',50) for t in timeframe_data.values()]):.1f}%
@@ -159,70 +141,26 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except BinanceAPIException as e:
         await update.message.reply_text(f"❌ Exchange Error: {e.message}")
-        logger.error(f"Binance API Error: {str(e)}")
     except Exception as e:
-        await update.message.reply_text("🔴 System temporarily unavailable. Please try again later.")
-        logger.error(f"Analysis pipeline failed: {str(e)}\n{traceback.format_exc()}")
+        await update.message.reply_text("🔴 Temporary system issue. Please try again.")
+        logger.error(f"Analysis error: {str(e)}\n{traceback.format_exc()}")
 
-def main_loop():
-    """Self-healing main execution loop"""
-    backoff = 1
-    max_backoff = 300  # 5 minutes max
-    consecutive_errors = 0
+def main():
+    """Main execution loop"""
+    scheduler = start_scheduler()
+    app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("analyze", analyze_coin))
     
-    while True:
-        try:
-            # Fresh instance each iteration
-            app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
-            app.add_handler(CommandHandler("start", start))
-            app.add_handler(CommandHandler("analyze", analyze_coin))
-            
-            scheduler = start_scheduler()
-            
-            logger.info("🚀 Starting bot...")
-            app.run_polling()
-            
-            # Reset counters on clean exit
-            backoff = 1
-            consecutive_errors = 0
-            
-        except KeyboardInterrupt:
-            logger.info("🛑 Graceful shutdown initiated")
-            break
-        except Exception as e:
-            consecutive_errors += 1
-            logger.critical(f"💥 Critical failure: {str(e)}\n{traceback.format_exc()}")
-            
-            # Exponential backoff with jitter
-            sleep_time = min(backoff * (2 ** consecutive_errors), max_backoff)
-            sleep_time *= np.random.uniform(0.5, 1.5)
-            
-            logger.info(f"⏳ Restarting in {sleep_time:.1f}s (errors: {consecutive_errors})...")
-            time.sleep(sleep_time)
-            
-        finally:
-            # Cleanup resources
-            try:
-                if 'scheduler' in locals() and scheduler.running:
-                    scheduler.shutdown()
-                ml.close_client()
-                if 'app' in locals():
-                    app.stop()
-            except Exception as cleanup_error:
-                logger.error(f"Cleanup failed: {str(cleanup_error)}")
+    try:
+        logger.info("🤖 Bot starting...")
+        app.run_polling()
+    except KeyboardInterrupt:
+        logger.info("🛑 Graceful shutdown")
+    finally:
+        scheduler.shutdown()
+        logger.info("🧹 Cleanup completed")
 
 if __name__ == '__main__':
-    multiprocessing.freeze_support()  # For Windows, or if freezing the script to exe
-    logger.info("🚀 Application starting...")
-    
-    # Systemd-style supervision
-    while True:
-        try:
-            main_loop()
-        except KeyboardInterrupt:
-            logger.info("🔴 Permanent shutdown requested")
-            break
-        except Exception as fatal_error:
-            logger.critical(f"💀 Catastrophic failure: {str(fatal_error)}")
-            logger.info("🔁 Attempting cold restart in 60s...")
-            time.sleep(60)
+    multiprocessing.freeze_support()
+    main()
