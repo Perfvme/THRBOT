@@ -63,8 +63,13 @@ class MLSystem:
             return False
 
     def predict(self, current_data):
-        """Prediction with fallback"""
-        try:
+    try:
+        # Convert to DataFrame with proper NaN handling
+        input_df = pd.DataFrame([current_data]).fillna(0)
+        
+        # Ensure numeric types
+        for col in self.features:
+            input_df[col] = pd.to_numeric(input_df[col], errors='coerce').fillna(0)
             if not self.model:
                 try:
                     self.model = joblib.load('ml_model.pkl')
