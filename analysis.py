@@ -87,29 +87,26 @@ def analyze_data(df, symbol):
         df['VPOC_LIQ_RATIO'] = df['LIQ_CLUSTERS'] / (df['VPOC_STRENGTH'] + 1e-6)
         
         latest = df.iloc[-1]
-        # Add these to analyze_data() function before returning:
-        latest = df.iloc[-1]
-
-        # Add bearish signals
+        
+        # Calculate signal scores (FIXED 'price' to 'close')
+        bullish_signals = sum([
+            latest['BULLISH_DIVERGENCE'],
+            latest['close'] > latest['BB_UPPER'],
+            latest['EMA_20'] > latest['EMA_50'],
+            latest['RSI'] < 30,
+            latest['MACD'] > 0
+        ])
+        
         bearish_signals = sum([
             latest['BEARISH_DIVERGENCE'],
-            latest['price'] < latest['BB_LOWER'],
+            latest['close'] < latest['BB_LOWER'],
             latest['EMA_20'] < latest['EMA_50'],
             latest['RSI'] > 70,
             latest['MACD'] < 0
         ])
 
-        # Add bullish signals 
-        bullish_signals = sum([
-            latest['BULLISH_DIVERGENCE'],
-            latest['price'] > latest['BB_UPPER'],
-            latest['EMA_20'] > latest['EMA_50'],
-            latest['RSI'] < 30,
-            latest['MACD'] > 0
-        ])
-
         return {
-            'price': latest['close'],
+            'price': float(latest['close']),  # Changed from 'price' to 'close'
             'rsi': float(latest['RSI']),
             'ema': float(latest['EMA_20']),
             'ema50': float(latest['EMA_50']),
@@ -127,11 +124,11 @@ def analyze_data(df, symbol):
             'vpoc_level': float(latest.get('VPOC_LEVEL', 0.0)),
             'vpoc_strength': float(latest.get('VPOC_STRENGTH', 0.0)),
             'vpoc_delta': float(latest.get('VPOC_DELTA', 0.0)),
-            'vpoc_liq_ratio': float(latest.get('VPOC_LIQ_RATIO', 0.0)),  # Added comma here
-            'quant_confidence': 0.0,  # Calculated in bot.py
+            'vpoc_liq_ratio': float(latest.get('VPOC_LIQ_RATIO', 0.0)),
             'bullish_score': bullish_signals,
             'bearish_score': bearish_signals,
-            'trend_direction': "bullish" if bullish_signals > bearish_signals else "bearish"
+            'trend_direction': "bullish" if bullish_signals > bearish_signals else "bearish",
+            'quant_confidence': 0.0  # Will be calculated in bot.py
         }
     except Exception as e:
         return {'error': f"Analysis error: {str(e)}"}
