@@ -186,7 +186,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Unexpected error: {str(e)}")
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_coin))
     print("🤖 Bot is running... Press CTRL+C to stop")
