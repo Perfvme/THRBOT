@@ -28,15 +28,15 @@ def get_crypto_data(symbol, timeframe):
             limit=100  # Reduced to stay under API limits
         )
         
-        df = pd.DataFrame(klines, columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'trades',
-            'taker_buy_base', 'taker_buy_quote', 'ignore'
-        ]).apply(pd.to_numeric, errors='coerce')
+        # Ensure proper column names and ordering
+        df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+        df = df.apply(pd.to_numeric, errors='coerce')
         
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        data_collector.store_data(df, symbol, timeframe)
-        
-        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']], None
+        # Add empty EMA columns if they don't exist
+        for period in [20, 50]:
+            if f'EMA_{period}' not in df.columns:
+                df[f'EMA_{period}'] = np.nan
+                
+        return df, None
     except Exception as e:
-        return None, f"Error: {str(e)}"
+        return None, f"Data error: {str(e)}"
