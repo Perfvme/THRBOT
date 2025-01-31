@@ -1,3 +1,6 @@
+import multiprocessing
+multiprocessing.set_start_method('spawn', force=True)
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import config
@@ -9,7 +12,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from ml_model import ml
 import pandas as pd
 import textwrap
-import multiprocessing
 import time
 import traceback
 import logging
@@ -167,7 +169,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except BinanceAPIException as e:
         await update.message.reply_text(f"❌ Exchange Error: {e.message}")
-        logger.error(f"Binance API Error: {e.message}")
+        logger.error(f"Binance API Error: {str(e)}")
     except Exception as e:
         await update.message.reply_text("🔴 System temporarily unavailable. Please try again later.")
         logger.error(f"Analysis pipeline failed: {str(e)}\n{traceback.format_exc()}")
