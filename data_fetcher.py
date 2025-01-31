@@ -1,6 +1,5 @@
 from binance.client import Client
 import pandas as pd
-import config
 
 client = Client(config.BINANCE_API_KEY, config.BINANCE_SECRET_KEY, testnet=True)
 
