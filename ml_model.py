@@ -1,88 +1,62 @@
 import pandas as pd
 import numpy as np
-import lightgbm as lgb
-import joblib
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import TimeSeriesSplit
-import os
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import pickle
+import time
 
-class MLSystem:
-    def __init__(self):
+class MLModel:
+    def __init__(self, model_path="ml_model.pkl"):
+        self.model_path = model_path
         self.model = None
-        self.features = [
-            'RSI', 'EMA_20', 'EMA_50', 'MACD', 'VWAP', 'ADX',
-            'funding_rate', 'open_interest', 'LIQUIDATION_IMPACT'
-        ]
-        
-    def create_features(self, df):
-        """Feature engineering without multiprocessing"""
-        df = df.copy()
-        # Lagged indicators
-        df['RSI_1'] = df['RSI'].shift(1)
-        df['RSI_3'] = df['RSI'].shift(3)
-        # Volatility
-        df['log_ret'] = np.log(df['close']).diff()
-        df['volatility'] = df['log_ret'].rolling(12).std()
-        return df.dropna()
+        self.load_model()
 
-    def train(self):
-        """Simplified training process"""
+    def load_model(self):
         try:
-            if not os.path.exists('data/processed.parquet'):
-                return False
-                
-            df = pd.read_parquet('data/processed.parquet')
-            df = self.create_features(df)
-            
-            if len(df) < 1000:
-                return False
+            with open(self.model_path, 'rb') as f:
+                self.model = pickle.load(f)
+            print("Loaded pre-trained model.")
+        except (FileNotFoundError, pickle.UnpicklingError):
+            print("No model found. Initializing a new model.")
+            self.model = RandomForestClassifier(n_estimators=100, random_state=42)
 
-            X = df[self.features]
-            y = df['target']
-
-            self.model = lgb.LGBMClassifier(
-                n_estimators=100,
-                learning_rate=0.1,
-                max_depth=3,
-                n_jobs=1,  # Single-threaded to avoid multiprocessing
-                random_state=42
-            )
-
-            tscv = TimeSeriesSplit(n_splits=3)
-            scores = []
-            for train_idx, test_idx in tscv.split(X):
-                self.model.fit(X.iloc[train_idx], y.iloc[train_idx])
-                scores.append(roc_auc_score(y.iloc[test_idx], 
-                                          self.model.predict_proba(X.iloc[test_idx])[:,1]))
-
-            joblib.dump(self.model, 'ml_model.pkl')
-            return np.mean(scores)
-            
-        except Exception as e:
-            print(f"Training error: {str(e)}")
-            return False
-
-    def predict(self, current_data):
-    try:
-        # Convert to DataFrame with proper NaN handling
-        input_df = pd.DataFrame([current_data]).fillna(0)
+    def retrain_model(self, data: pd.DataFrame):
+        """Train the model on new data."""
+        features = ['RSI', 'EMA_20', 'EMA_50', 'MACD', 'ADX', 'ATR', 'VWAP', 'BB_WIDTH']
+        X = data[features]
+        y = (data['price'].shift(-1) > data['price']).astype(int)  # 1 for price increase, 0 for decrease
         
-        # Ensure numeric types
-        for col in self.features:
-            input_df[col] = pd.to_numeric(input_df[col], errors='coerce').fillna(0)
-            if not self.model:
-                try:
-                    self.model = joblib.load('ml_model.pkl')
-                except:
-                    return {'confidence': 50.0, 'uncertainty': 100.0}
-                
-            proba = self.model.predict_proba(pd.DataFrame([current_data]))[0]
-            return {
-                'confidence': float(proba[1]) * 100,
-                'uncertainty': float(np.abs(proba[1] - proba[0])) * 50
-            }
-        except Exception as e:
-            print(f"Prediction error: {str(e)}")
-            return {'confidence': 50.0, 'uncertainty': 100.0}
+        # Train/test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # Train the model
+        self.model.fit(X_train, y_train)
 
-ml = MLSystem()
+        # Evaluate the model
+        y_pred = self.model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        print(f"Model trained. Accuracy: {accuracy:.2f}")
+
+        # Save the model
+        with open(self.model_path, 'wb') as f:
+            pickle.dump(self.model, f)
+        print("Model saved.")
+
+    def predict(self, data: pd.DataFrame):
+        """Predict market direction (Bullish: 1, Bearish: 0)."""
+        features = ['RSI', 'EMA_20', 'EMA_50', 'MACD', 'ADX', 'ATR', 'VWAP', 'BB_WIDTH']
+        X = data[features]
+        prediction = self.model.predict(X.iloc[[-1]])  # Predict based on the latest data point
+        return prediction[0]  # Return predicted class (1 or 0)
+
+    def update_model_periodically(self, data: pd.DataFrame, interval=86400):
+        """Retrain the model at regular intervals (e.g., daily)."""
+        last_update_time = 0
+        while True:
+            current_time = time.time()
+            if current_time - last_update_time >= interval:
+                self.retrain_model(data)  # Retrain the model with new data
+                last_update_time = current_time
+            time.sleep(3600)  # Sleep for 1 hour before checking again
+
