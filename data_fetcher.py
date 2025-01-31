@@ -1,10 +1,6 @@
 from binance.client import Client
 import pandas as pd
 import config
-from data_collector import DataCollector
-
-client = Client(config.BINANCE_API_KEY, config.BINANCE_SECRET_KEY)
-data_collector = DataCollector()
 
 client = Client(config.BINANCE_API_KEY, config.BINANCE_SECRET_KEY, testnet=True)
 
