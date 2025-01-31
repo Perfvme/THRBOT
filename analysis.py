@@ -5,8 +5,20 @@ import numpy as np
 
 def analyze_data(df, symbol):
     try:
-        df = df.ffill().apply(pd.to_numeric, errors='coerce')
-        
+        # Ensure numeric conversion first
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+        df = df.ffill()
+
+        # Calculate EMAs with validation
+        ema_periods = [20, 50]
+        for period in ema_periods:
+            try:
+                df[f'EMA_{period}'] = TA.EMA(df, period)
+            except Exception as e:
+                print(f"Error calculating EMA {period}: {str(e)}")
+                df[f'EMA_{period}'] = np.nan  # Create empty column
+
         # Core Indicators
         df['RSI'] = TA.RSI(df).rolling(3).mean()
         df['EMA_20'] = TA.EMA(df, 20)
@@ -24,12 +36,12 @@ def analyze_data(df, symbol):
         df['OBV'] = TA.OBV(df)
         df['VWAP'] = TA.VWAP(df)
         
-        latest = df.iloc[-1]
+         latest = df.iloc[-1]
         return {
             'price': latest['close'],
-            'rsi': latest['RSI'],
-            'ema20': latest['EMA_20'],
-            'ema50': latest['EMA_50'],
+            'rsi': latest.get('RSI', 50),
+            'ema': latest.get('EMA_20', latest['close']),  # Fallback to close price
+            'ema50': latest.get('EMA_50', latest['close']),
             'macd': latest['MACD'],
             'adx': latest['ADX'],
             'atr': latest['ATR'],
@@ -39,4 +51,4 @@ def analyze_data(df, symbol):
             'vwap': latest['VWAP']
         }
     except Exception as e:
-        return {'error': str(e)}
+        return {'error': f"Analysis failed: {str(e)}"}
