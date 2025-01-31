@@ -27,7 +27,7 @@ class MLSystem:
         return df.dropna()
 
     def train(self):
-        """Simplified training without distributed computing"""
+        """Simplified training using pandas"""
         try:
             if not os.path.exists('data/processed.parquet'):
                 return False
@@ -84,3 +84,4 @@ class MLSystem:
         except Exception as e:
             print(f"Prediction error: {str(e)}")
             return {'confidence': 50.0, 'uncertainty': 100.0}
+ml = MLSystem()
