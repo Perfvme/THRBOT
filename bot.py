@@ -1,4 +1,3 @@
-import multiprocessing
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import config
@@ -6,120 +5,99 @@ import data_fetcher
 import analysis
 import gemini_processor
 from binance.exceptions import BinanceAPIException
-from apscheduler.schedulers.background import BackgroundScheduler
-from ml_model import ml
-import textwrap
-import time
-import traceback
-import logging
-import numpy as np
+from ml_model import MLModel
 
-# Configure logging first
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-def start_scheduler():
-    """Initialize scheduler without multiprocessing"""
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(ml.train, 'interval', hours=24)
-    scheduler.start()
-    logger.info("Scheduler started")
-    return scheduler
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await update.message.reply_text(textwrap.dedent("""\
-            🚀 Crypto Analysis Bot 3.0 🚀
-            
-            /analyze <coin> - Get analysis for a cryptocurrency
-            Example: /analyze BTC"""))
-    except Exception as e:
-        logger.error(f"Start error: {str(e)}")
+# Initialize the ML Model
+ml_model = MLModel()
 
 async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle analysis requests"""
     try:
         if not context.args:
-            await update.message.reply_text("❌ Please provide a coin symbol")
+            await update.message.reply_text("❌ Please provide a coin symbol. Example: /analyze BTC")
             return
 
-        symbol = context.args[0].upper().strip()
+        raw_symbol = context.args[0].upper().strip()
         timeframes = ['5m', '15m', '1h', '4h', '1d']
-        analysis_data = {}
+        
+        # Initial symbol check
+        df, error = data_fetcher.get_crypto_data(raw_symbol, '5m')
+        if error:
+            await update.message.reply_text(f"❌ {error}")
+            return
 
-        # Simple data collection
+        timeframe_data = {}
+        
+        # Collect all timeframe data first
         for tf in timeframes:
-            try:
-                df, error = data_fetcher.get_crypto_data(symbol, tf)
-                if error: continue
+            df, error = data_fetcher.get_crypto_data(raw_symbol, tf)
+            if error:
+                await update.message.reply_text(f"❌ {tf} error: {error}")
+                return
                 
-                ta = analysis.analyze_data(df, symbol)
-                if 'error' in ta: continue
+            ta = analysis.analyze_data(df, raw_symbol)
+            if 'error' in ta:
+                await update.message.reply_text(f"❌ Analysis failed: {ta['error']}")
+                return
+            
+            # Calculate quantitative confidence
+            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
+            rsi_score = 1 - abs(ta['rsi']-50)/50 if ta['rsi'] else 0.5
+            trend_score = 0.5  # Neutral baseline
+            
+            if (ta['price'] > ta['ema'] and ta['macd'] > 0 and ta['obv_trend'] == "↑"):
+                trend_score = 1.0
+            elif (ta['price'] < ta['ema'] and ta['macd'] < 0 and ta['obv_trend'] == "↓"):
+                trend_score = 1.0
+                
+            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * 100
+            ta['quant_confidence'] = max(0, min(round(quant_confidence, 1), 100))
+            
+            # Get machine learning prediction confidence
+            ml_confidence = ml_model.predict(df)
+            ta['ml_confidence'] = 100 if ml_confidence == 1 else 0  # 100 for Bullish, 0 for Bearish
+            
+            timeframe_data[tf] = ta
 
-                # ML prediction
-                ml_pred = ml.predict({
-                    'RSI': ta['rsi'],
-                    'EMA_20': ta.get('ema', ta.get('price', 0)),
-                    'EMA_50': ta.get('ema50', ta.get('price', 0)),
-                    'MACD': ta['macd'],
-                    'VWAP': ta['vwap'],
-                    'ADX': ta['adx'],
-                    'funding_rate': ta.get('funding_rate', 0),
-                    'open_interest': ta.get('open_interest', 0),
-                    'LIQUIDATION_IMPACT': ta.get('liq_impact', 0)
-                })
-                
-                analysis_data[tf] = {
-                    'price': ta['price'],
-                    'ml_confidence': ml_pred['confidence'],
-                    'quant_confidence': min(100, max(0, 0.6*ta['quant_confidence'] + 0.4*ml_pred['confidence']))
-                }
-                
-            except Exception as e:
-                logger.error(f"{tf} error: {str(e)}")
-                continue
-
-        # Generate output
-        output = f"📊 *{symbol} Analysis*\n\n"
-        output += "```\nTF    | Price    | ML Conf | Q-Conf\n"
-        output += "---------------------------------------\n"
+        # Generate consolidated analysis
+        analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
+        analysis_text += "```\n"
+        analysis_text += "TF    | Price    | RSI  | EMA20/50   | MACD     | ADX  | BB Position | Q-Conf | ML Conf\n"
+        analysis_text += "-------------------------------------------------------------------------------\n"
         
         for tf in timeframes:
-            data = analysis_data.get(tf, {})
-            output += (
+            ta = timeframe_data[tf]
+            bb_position = "Middle" if (ta['price'] > ta['bb_lower'] and ta['price'] < ta['bb_upper']) else ("Upper" if ta['price'] > ta['bb_upper'] else "Lower")
+            analysis_text += (
                 f"{tf.upper().ljust(4)} "
-                f"| ${data.get('price',0):>7.2f} "
-                f"| {data.get('ml_confidence',50):>6.1f}% "
-                f"| {data.get('quant_confidence',50):>5.1f}%\n"
+                f"| ${ta['price']:>7.2f} "
+                f"| {ta['rsi']:>3.0f} "
+                f"| {ta['ema']:>5.2f}/{ta['ema50']:>5.2f} "
+                f"| {ta['macd']:>+7.4f} "
+                f"| {ta['adx']:>3.0f} "
+                f"| {bb_position.ljust(6)} "
+                f"| {ta['quant_confidence']:>5.1f}% "
+                f"| {ta['ml_confidence']:>5.1f}%\n"
             )
-        output += "```\n"
+            
+        analysis_text += "```\n\n"
+        
+        # Final message
+        final_message = f"""
+📈 Final Analysis for {raw_symbol}:
+{analysis_text}
 
-        await update.message.reply_text(output)
+📊 Quantitative Confidence Scores:
+5m: {timeframe_data['5m']['quant_confidence']}%
+1h: {timeframe_data['1h']['quant_confidence']}%
+1d: {timeframe_data['1d']['quant_confidence']}%
 
+⚠️ Disclaimer: This is not financial advice. Always do your own research.
+        """
+        
+        await update.message.reply_text(final_message)
+
+    except BinanceAPIException as e:
+        await update.message.reply_text(f"❌ Binance API Error: {e.message}")
     except Exception as e:
-        await update.message.reply_text("🔴 Temporary system issue")
-        logger.error(f"Analysis error: {str(e)}")
-
-def main():
-    """Simplified main function"""
-    scheduler = start_scheduler()
-    app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("analyze", analyze_coin))
-    
-    try:
-        logger.info("🤖 Bot started")
-        app.run_polling()
-    finally:
-        scheduler.shutdown()
-        logger.info("🛑 Clean shutdown")
-
-if __name__ == '__main__':
-    multiprocessing.freeze_support()
-    main()
+        await update.message.reply_text(f"❌ Unexpected error: {str(e)}")
