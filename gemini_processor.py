@@ -40,41 +40,33 @@ def get_gemini_analysis(prompt):
         truncated_prompt = textwrap.shorten(prompt, width=30000, placeholder="... [truncated]")
         
         response = model.generate_content(
-            f"""ANALYSIS FORMAT REQUIREMENTS:
-1. MUST INCLUDE ALL SECTIONS: SCALP, SWING, PRICE ACTION NOTES, CONFIDENCE GUARDRAILS
-2. USE EXACT SECTION HEADERS FROM BELOW
-3. ALWAYS SHOW QUANTITATIVE AND AI CONFIDENCE
+            f"""STRICT RESPONSE FORMAT REQUIRED! ANALYZE BEARISH/BULLISH FACTORS:
 
 {truncated_prompt}
 
-*MANDATORY RESPONSE STRUCTURE:*
+*MANDATORY SECTIONS:*
 
-🚀 *SCALP (5-15m)*
-`Quantitative Confidence:` [VALUE]%
-`AI Confidence:` [VALUE]%
-`Strength:` [▲ High/► Medium/▼ Low] (ADX VALUE)  
-`Entry Strategy:`  
-[🟢 Wait for retest of LEVEL | 🔴 Breakout above LEVEL | ⏳ Rebound from LEVEL]  
-[🔴 Invalidation below LEVEL] 
-`Ideal Entry:` LEVEL-LEVEL 
-`Targets:` LEVEL → LEVEL  
-`Stop:` LEVEL (-X.X%)  
+🚀 SCALP (5-15m)
+`Direction:` [LONG/SHORT/NONE]
+`Confidence:` [%] (Technical/ML)
+`Entry Zone:` LEVEL-LEVEL
+`Targets:` LEVEL → LEVEL 
+`Stop:` LEVEL
 
-🌙 *SWING (1-4H)*  
-`Quantitative Confidence:` [VALUE]%
-`AI Confidence:` [VALUE]%
-`Market Structure: [...] 
-[🔼 Breakout needed | ⏸️ Consolidation | 🔻 Pullback]  
-`Ideal Entry:` LEVEL-LEVEL  
-`TP Levels:` LEVEL → LEVEL  
-`SL:` LEVEL (-X.X%)  
+🌙 SWING (1-4H)  
+`Direction:` [LONG/SHORT/NONE]
+`Confidence:` [%] (Technical/ML)
+`Key Levels:` Support: LEVEL | Resistance: LEVEL
+`Entry Zone:` LEVEL-LEVEL
+`Targets:` LEVEL-LEVEL
+`Stop:` LEVEL
+`Risk/Reward:` 1:X
 
-🔍 *PRICE ACTION NOTES*  
-1. [...]
-2. [...]
+🔍 MARKET DYNAMICS
+1. Bullish Factors: [...] 
+2. Bearish Risks: [...]
 
-⚠️ *CONFIDENCE GUARDRAILS*  
-- [...]"""
+⚠️ ALERT: If conflicting signals, state: 'CONFLICTING SIGNALS - WAIT'"""
         )
 
         if validate_response(response.text):
