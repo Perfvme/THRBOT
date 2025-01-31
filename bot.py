@@ -1,6 +1,6 @@
-# bot.py
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import config
 import data_fetcher
 import analysis
 import gemini_processor
@@ -8,27 +8,13 @@ from binance.exceptions import BinanceAPIException
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 import ml_trainer
-from dotenv import load_dotenv
+import sqlite3
 import os
-import logging
-import threading
-
-# Load environment variables from the .env file
-load_dotenv()
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not all([TELEGRAM_TOKEN, BINANCE_API_KEY, BINANCE_SECRET_KEY, GEMINI_API_KEY]):
-    logging.error("One or more environment variables are missing. Check your .env file.")
-    exit(1)
 
 # Initialize ML scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(ml_trainer.ml_engine.train, 'cron', hour=3)  # Daily training at 3 AM
-scheduler.add_job(ml_trainer.ml_engine.update_outcomes, 'interval', hours=1)  # Update outcomes hourly
+scheduler.add_job(ml_trainer.ml_engine.update_outcomes, 'interval', hours=1)
 scheduler.start()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -37,13 +23,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Usage:
 /analyze <coin>  Example: /analyze BTC
+/mlstatus - Show ML system health
 
 Features:
-- 5min to 1D timeframe analysis
-- Technical indicators (RSI, EMA, MACD, ADX)
-- AI-powered recommendations with risk management
-- Support/resistance levels
-- Quantitative & ML confidence scoring""")
+- Multi-timeframe technical analysis
+- AI-powered LONG/SHORT recommendations
+- Quantitative & ML confidence scoring
+- Risk management guidance""")
 
 async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle analysis requests"""
@@ -63,7 +49,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         timeframe_data = {}
         
-        # Collect all timeframe data first
+        # Collect all timeframe data
         for tf in timeframes:
             df, error = data_fetcher.get_crypto_data(raw_symbol, tf)
             if error:
@@ -74,8 +60,11 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if 'error' in ta:
                 await update.message.reply_text(f"❌ Analysis failed: {ta['error']}")
                 return
-
-            # Modified confidence calculation
+            
+            # Calculate quantitative confidence
+            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
+            rsi_score = 1 - abs(ta['rsi']-50)/50 if ta['rsi'] else 0.5
+            
             if ta['trend_direction'] == "bullish":
                 trend_score = 1.0
                 direction_multiplier = 1.0
@@ -91,7 +80,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             timeframe_data[tf] = ta
 
-            # Save data for ML training
+            # Save data for ML
             ml_trainer.ml_engine.save_analysis({
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'symbol': raw_symbol,
@@ -103,8 +92,8 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'adx': ta['adx'],
                 'bb_width': ta['bb_width'],
                 'price': ta['price'],
-                'trend_bullish': 1 if (ta['price'] > ta['ema'] and ta['macd'] > 0 and ta['obv_trend'] == "↑") else 0,
-                'trend_bearish': 1 if (ta['price'] < ta['ema'] and ta['macd'] < 0 and ta['obv_trend'] == "↓") else 0,
+                'trend_bullish': 1 if ta['trend_direction'] == "bullish" else 0,
+                'trend_bearish': 1 if ta['trend_direction'] == "bearish" else 0,
                 'outcome': None
             })
 
@@ -122,7 +111,9 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             ml_confidences[tf] = ml_trainer.ml_engine.predict(features)
 
-         # Modified analysis text
+        # Build analysis report
+        analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
+        analysis_text += "```\n"
         analysis_text += "TF    | Price    | RSI  | Trend  | Q-Conf | ML-Conf\n"
         analysis_text += "-----------------------------------------------------\n"
         
@@ -142,25 +133,11 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         analysis_text += f"• Strong Support: ${min([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n"
         analysis_text += f"• Strong Resistance: ${max([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n\n"
 
-        # Trend alignment analysis
-        trend_strength = {'bullish': 0, 'bearish': 0, 'neutral': 0}
-        
-        for tf in timeframes:
-            ta = timeframe_data[tf]
-            if (ta['price'] > ta['ema'] and ta['macd'] > 0 and ta['obv_trend'] == "↑"):
-                trend_strength['bullish'] += 1
-            elif (ta['price'] < ta['ema'] and ta['macd'] < 0 and ta['obv_trend'] == "↓"):
-                trend_strength['bearish'] += 1
-            else:
-                trend_strength['neutral'] += 1
-        
-        analysis_text += f"🔀 Trend Consensus: Bullish {trend_strength['bullish']}/5, Bearish {trend_strength['bearish']}/5\n"
-
         # Generate recommendations
         await update.message.reply_text("🔄 Generating AI recommendations...")
         recommendations = gemini_processor.get_gemini_analysis(analysis_text)
         
-        # Modified final message
+        # Format final message
         main_bias = max(
             [(tf, timeframe_data[tf]['trend_direction']) for tf in timeframes],
             key=lambda x: timeframe_data[x[0]]['quant_confidence']
@@ -183,9 +160,34 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Unexpected error: {str(e)}")
 
+async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show ML system health status"""
+    try:
+        conn = sqlite3.connect('ml_data.db')
+        stats = conn.execute('''
+            SELECT 
+                COUNT(*) AS total,
+                AVG(outcome) AS success_rate,
+                MAX(timestamp) AS last_update
+            FROM analysis_data
+        ''').fetchone()
+        
+        model_size = os.path.getsize('ml_model.pkl')/1024 if os.path.exists('ml_model.pkl') else 0
+        
+        await update.message.reply_text(
+            f"🤖 ML System Status:\n"
+            f"Total Samples: {stats[0]}\n"
+            f"Success Rate: {stats[1]*100:.1f}% (Last 100 trades)\n"
+            f"Last Update: {stats[2]}\n"
+            f"Model Size: {model_size:.1f}KB"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ ML Status Error: {str(e)}")
+
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_coin))
+    app.add_handler(CommandHandler("mlstatus", ml_status))
     print("🤖 Bot is running... Press CTRL+C to stop")
     app.run_polling()
