@@ -84,4 +84,5 @@ class MLSystem:
         except Exception as e:
             print(f"Prediction error: {str(e)}")
             return {'confidence': 50.0, 'uncertainty': 100.0}
+            
 ml = MLSystem()
