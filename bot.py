@@ -7,14 +7,14 @@ import analysis
 import gemini_processor
 from binance.exceptions import BinanceAPIException
 from apscheduler.schedulers.background import BackgroundScheduler
-from ml_model import MLSystem
+from ml_model import ml
 import textwrap
 import time
 import traceback
 import logging
 import numpy as np
 
-# Configure logging
+# Configure logging first
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -25,60 +25,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize ML system
-ml = MLSystem()
-
 def start_scheduler():
-    """Initialize scheduler without Dask dependencies"""
+    """Initialize scheduler without multiprocessing"""
     scheduler = BackgroundScheduler()
     scheduler.add_job(ml.train, 'interval', hours=24)
     scheduler.start()
-    logger.info("Scheduler started with daily ML training")
+    logger.info("Scheduler started")
     return scheduler
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        health_status = "🟢 Operational" if ml.model else "🟡 Initializing"
-        await update.message.reply_text(textwrap.dedent(f"""\
+        await update.message.reply_text(textwrap.dedent("""\
             🚀 Crypto Analysis Bot 3.0 🚀
             
-            System Status: {health_status}
-            ML Model: {'Trained' if ml.model else 'Pending'}
-            
-            Usage:
-            /analyze <coin>  Example: /analyze BTC"""))
+            /analyze <coin> - Get analysis for a cryptocurrency
+            Example: /analyze BTC"""))
     except Exception as e:
-        logger.error(f"Start command error: {str(e)}")
+        logger.error(f"Start error: {str(e)}")
 
 async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.args:
-            await update.message.reply_text("❌ Please provide a coin symbol. Example: /analyze BTC")
+            await update.message.reply_text("❌ Please provide a coin symbol")
             return
 
-        raw_symbol = context.args[0].upper().strip()
+        symbol = context.args[0].upper().strip()
         timeframes = ['5m', '15m', '1h', '4h', '1d']
-        timeframe_data = {}
+        analysis_data = {}
 
-        # Data fetching with retries
-        for attempt in range(3):
-            try:
-                df, error = data_fetcher.get_crypto_data(raw_symbol, '5m')
-                if error: raise ValueError(error)
-                break
-            except Exception as e:
-                if attempt == 2: raise
-                time.sleep(2 ** attempt)
-
-        # Process timeframes
+        # Simple data collection
         for tf in timeframes:
             try:
-                df, error = data_fetcher.get_crypto_data(raw_symbol, tf)
+                df, error = data_fetcher.get_crypto_data(symbol, tf)
                 if error: continue
                 
-                ta = analysis.analyze_data(df, raw_symbol)
+                ta = analysis.analyze_data(df, symbol)
                 if 'error' in ta: continue
 
+                # ML prediction
                 ml_pred = ml.predict({
                     'RSI': ta['rsi'],
                     'EMA_20': ta['ema'],
@@ -91,75 +75,50 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'LIQUIDATION_IMPACT': ta.get('liq_impact', 0)
                 })
                 
-                ta.update({
+                analysis_data[tf] = {
+                    'price': ta['price'],
                     'ml_confidence': ml_pred['confidence'],
-                    'ml_uncertainty': ml_pred['uncertainty'],
                     'quant_confidence': min(100, max(0, 0.6*ta['quant_confidence'] + 0.4*ml_pred['confidence']))
-                })
+                }
                 
-                timeframe_data[tf] = ta
-                
-            except Exception as tf_error:
-                logger.error(f"Timeframe {tf} error: {str(tf_error)}")
+            except Exception as e:
+                logger.error(f"{tf} error: {str(e)}")
                 continue
 
-        # Generate analysis output
-        analysis_text = f"📊 *{raw_symbol} Analysis*\n\n"
-        analysis_text += "```\nTF    | Price    | ML Conf | Uncertainty | Q-Conf\n"
-        analysis_text += "-----------------------------------------------------\n"
+        # Generate output
+        output = f"📊 *{symbol} Analysis*\n\n"
+        output += "```\nTF    | Price    | ML Conf | Q-Conf\n"
+        output += "---------------------------------------\n"
         
         for tf in timeframes:
-            ta = timeframe_data.get(tf, {})
-            analysis_text += (
+            data = analysis_data.get(tf, {})
+            output += (
                 f"{tf.upper().ljust(4)} "
-                f"| ${ta.get('price',0):>7.2f} "
-                f"| {ta.get('ml_confidence',50):>6.1f}% "
-                f"| ±{ta.get('ml_uncertainty',100):>4.1f}% "
-                f"| {ta.get('quant_confidence',50):>5.1f}%\n"
+                f"| ${data.get('price',0):>7.2f} "
+                f"| {data.get('ml_confidence',50):>6.1f}% "
+                f"| {data.get('quant_confidence',50):>5.1f}%\n"
             )
-        analysis_text += "```\n\n"
+        output += "```\n"
 
-        # Generate recommendations
-        try:
-            await update.message.reply_text("🔄 Generating AI recommendations...")
-            recommendations = gemini_processor.get_gemini_analysis(analysis_text)
-        except Exception as e:
-            recommendations = f"⚠️ AI Analysis Unavailable: {str(e)}"
+        await update.message.reply_text(output)
 
-        # Final message
-        final_message = textwrap.dedent(f"""\
-        📈 Final Analysis for {raw_symbol}:
-        {recommendations}
-
-        🤖 ML Insights:
-        - Average Confidence: {np.mean([t.get('ml_confidence',50) for t in timeframe_data.values()]):.1f}%
-        - System Health: {'Stable' if ml.model else 'Initializing'}
-
-        ⚠️ Disclaimer: Algorithmic analysis only. Verify with other sources.""")
-
-        await update.message.reply_text(final_message)
-
-    except BinanceAPIException as e:
-        await update.message.reply_text(f"❌ Exchange Error: {e.message}")
     except Exception as e:
-        await update.message.reply_text("🔴 Temporary system issue. Please try again.")
-        logger.error(f"Analysis error: {str(e)}\n{traceback.format_exc()}")
+        await update.message.reply_text("🔴 Temporary system issue")
+        logger.error(f"Analysis error: {str(e)}")
 
 def main():
-    """Main execution loop"""
+    """Simplified main function"""
     scheduler = start_scheduler()
     app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_coin))
     
     try:
-        logger.info("🤖 Bot starting...")
+        logger.info("🤖 Bot started")
         app.run_polling()
-    except KeyboardInterrupt:
-        logger.info("🛑 Graceful shutdown")
     finally:
         scheduler.shutdown()
-        logger.info("🧹 Cleanup completed")
+        logger.info("🛑 Clean shutdown")
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
