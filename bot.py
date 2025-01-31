@@ -16,7 +16,7 @@ import traceback
 import logging
 import numpy as np
 
-# Configure logging first
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -212,7 +212,7 @@ def main_loop():
                 logger.error(f"Cleanup failed: {str(cleanup_error)}")
 
 if __name__ == '__main__':
-    multiprocessing.freeze_support()
+    multiprocessing.freeze_support()  # For Windows, or if freezing the script to exe
     logger.info("🚀 Application starting...")
     
     # Systemd-style supervision
