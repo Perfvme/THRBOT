@@ -71,9 +71,9 @@ class MLTrainer:
                     df, error = data_fetcher.get_crypto_data(symbol, tf)
                     if not error and not df.empty:
                         new_price = df['close'].iloc[-1]
-                        direction = 1 if new_price > price else 0
-                        expected = 1 if t_bull > t_bear else 0 if t_bear > t_bull else None
-                        outcome = 1 if direction == expected else 0 if expected is not None else None
+                        direction = 1 if new_price > price else -1  # -1 for bearish
+                        expected = 1 if t_bull > t_bear else -1 if t_bear > t_bull else 0
+                        outcome = 1 if direction == expected else 0
                         if outcome is not None:
                             cursor = self.conn.cursor()
                             cursor.execute('UPDATE analysis_data SET outcome=? WHERE id=?', (outcome, id))
