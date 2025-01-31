@@ -7,6 +7,8 @@ from binance.exceptions import BinanceAPIException
 from ml_model import MLModel
 from dotenv import load_dotenv
 import os
+import logging
+import threading
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -15,6 +17,10 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not all([TELEGRAM_TOKEN, BINANCE_API_KEY, BINANCE_SECRET_KEY, GEMINI_API_KEY]):
+    logging.error("One or more environment variables are missing. Check your .env file.")
+    exit(1)
 
 # Initialize the ML Model
 ml_model = MLModel()
