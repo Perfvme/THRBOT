@@ -11,7 +11,7 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-client = Client(config.BINANCE_API_KEY, config.BINANCE_SECRET_KEY, testnet=True)
+client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET_KEY"), testnet=True)
 
 def get_valid_symbols():
     """Get all active USDT pairs from Binance"""
