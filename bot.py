@@ -74,18 +74,19 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if 'error' in ta:
                 await update.message.reply_text(f"❌ Analysis failed: {ta['error']}")
                 return
-            
-            # Calculate quantitative confidence
-            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
-            rsi_score = 1 - abs(ta['rsi']-50)/50 if ta['rsi'] else 0.5
-            trend_score = 0.5  # Neutral baseline
-            
-            if (ta['price'] > ta['ema'] and ta['macd'] > 0 and ta['obv_trend'] == "↑"):
+
+            # Modified confidence calculation
+            if ta['trend_direction'] == "bullish":
                 trend_score = 1.0
-            elif (ta['price'] < ta['ema'] and ta['macd'] < 0 and ta['obv_trend'] == "↓"):
+                direction_multiplier = 1.0
+            elif ta['trend_direction'] == "bearish":
                 trend_score = 1.0
+                direction_multiplier = -1.0
+            else:
+                trend_score = 0.5
+                direction_multiplier = 0.0
                 
-            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * 100
+            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * abs(direction_multiplier) * 100
             ta['quant_confidence'] = max(0, min(round(quant_confidence, 1), 100))
             
             timeframe_data[tf] = ta
@@ -121,23 +122,17 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             ml_confidences[tf] = ml_trainer.ml_engine.predict(features)
 
-        # Generate consolidated analysis
-        analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
-        analysis_text += "```\n"
-        analysis_text += "TF    | Price    | RSI  | EMA20/50   | MACD     | ADX  | BB Position | Q-Conf | ML-Conf\n"
-        analysis_text += "-----------------------------------------------------------------------------------------\n"
+         # Modified analysis text
+        analysis_text += "TF    | Price    | RSI  | Trend  | Q-Conf | ML-Conf\n"
+        analysis_text += "-----------------------------------------------------\n"
         
         for tf in timeframes:
             ta = timeframe_data[tf]
-            bb_position = "Middle" if (ta['price'] > ta['bb_lower'] and ta['price'] < ta['bb_upper']) else ("Upper" if ta['price'] > ta['bb_upper'] else "Lower")
             analysis_text += (
                 f"{tf.upper().ljust(4)} "
                 f"| ${ta['price']:>7.2f} "
                 f"| {ta['rsi']:>3.0f} "
-                f"| {ta['ema']:>5.2f}/{ta['ema50']:>5.2f} "
-                f"| {ta['macd']:>+7.4f} "
-                f"| {ta['adx']:>3.0f} "
-                f"| {bb_position.ljust(6)} "
+                f"| {ta['trend_direction'][:5].ljust(5)} "
                 f"| {ta['quant_confidence']:>5.1f}% "
                 f"| {ml_confidences[tf]:>5.1f}%\n"
             )
@@ -165,17 +160,20 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Generating AI recommendations...")
         recommendations = gemini_processor.get_gemini_analysis(analysis_text)
         
-        # Format final message
+        # Modified final message
+        main_bias = max(
+            [(tf, timeframe_data[tf]['trend_direction']) for tf in timeframes],
+            key=lambda x: timeframe_data[x[0]]['quant_confidence']
+        )[1]
+        
         final_message = f"""
-📈 Final Analysis for {raw_symbol}:
-{recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis (Verify Manually):\n" + recommendations}
+📈 Final Analysis for {raw_symbol} ({main_bias.upper()} BIAS):
+{recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis:\n" + recommendations}
 
-📊 Confidence Scores (Quant/ML):
-5m: {timeframe_data['5m']['quant_confidence']}% / {ml_confidences['5m']:.1f}%
-1h: {timeframe_data['1h']['quant_confidence']}% / {ml_confidences['1h']:.1f}%
-1d: {timeframe_data['1d']['quant_confidence']}% / {ml_confidences['1d']:.1f}%
+⚖️ Confidence Scores:
+{" | ".join([f"{tf.upper()}: {timeframe_data[tf]['quant_confidence']}%/{ml_confidences[tf]:.1f}%" for tf in ['5m', '1h', '1d']])}
 
-⚠️ Disclaimer: This is not financial advice. Always do your own research.
+⚠️ Risk Disclaimer: Crypto markets are volatile. Use stop-losses.
         """
         
         await update.message.reply_text(final_message)
