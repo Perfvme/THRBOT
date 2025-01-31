@@ -1,8 +1,17 @@
 # gemini_processor.py
 import google.generativeai as genai
-import config
 import textwrap
 from google.api_core import exceptions as google_exceptions
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from the .env file
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=config.GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-exp')
