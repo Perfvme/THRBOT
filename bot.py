@@ -179,8 +179,23 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except BinanceAPIException as e:
         await update.message.reply_text(f"❌ Binance API Error: {e.message}")
+
     except Exception as e:
-        await update.message.reply_text(f"❌ Unexpected error: {str(e)}")
+    # Collect quantitative data for fallback
+    quant_data = {
+        '5m': timeframe_data.get('5m', {}).get('quant_confidence', 50),
+        '1h': timeframe_data.get('1h', {}).get('quant_confidence', 50),
+        'support': min([ta.get('ema50', 0) for ta in timeframe_data.values()]),
+        'resistance': max([ta.get('ema50', 0) for ta in timeframe_data.values()]),
+        'rsi': timeframe_data.get('5m', {}).get('rsi', 50),
+        'macd': timeframe_data.get('5m', {}).get('macd', 0),
+        'vpoc': timeframe_data.get('4h', {}).get('vpoc_level', 0),
+        'liq_zone': timeframe_data.get('1h', {}).get('bb_lower', 0),
+        'bb_width': timeframe_data.get('1d', {}).get('bb_width', 0),
+        'adx': timeframe_data.get('1h', {}).get('adx', 0)
+    }
+    fallback_msg = gemini_processor.format_fallback_analysis(raw_symbol, quant_data)
+    await update.message.reply_text(f"⚠️ Partial Analysis:\n{fallback_msg}")
 
 async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show ML system health status"""
