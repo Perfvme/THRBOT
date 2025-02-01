@@ -33,31 +33,29 @@ def validate_response(text):
     ]
     return all(re.search(p, text, re.IGNORECASE) for p in patterns)
 
-def format_fallback_analysis(symbol):
-    """Fallback template for failed AI analysis"""
-    return f"""🔍 ANALYSIS FAILED - MANUAL CHECK REQUIRED
+def format_fallback_analysis(symbol, quant_confidence):
+    """Fallback template with real quantitative values"""
+    return f"""🔍 PARTIAL ANALYSIS REQUIRES VERIFICATION
 
 🚀 SCALP (5-15m)
-`Quantitative Confidence:` [VALUE]%
-`AI Confidence:` [VALUE]%
-`Strength:` [▲ High/► Medium/▼ Low] (ADX VALUE)  
-`Entry Strategy:` Manual Verification Needed
-`Ideal Entry:` N/A → N/A  
-`TP Levels:` N/A → N/A 
-`Stop:` N/A  
+`Quantitative Confidence:` {quant_confidence['5m']}%
+`AI Confidence:` 50.0% (Manual Check Needed)
+`Key Levels:` 
+- Support: ${quant_confidence['support']:.2f}
+- Resistance: ${quant_confidence['resistance']:.2f}
+`Action:` Verify RSI({quant_confidence['rsi']}) & MACD({quant_confidence['macd']:+})
 
 🌙 SWING (1-4H)  
-`Quantitative Confidence:` [VALUE]%
-`AI Confidence:` [VALUE]%
-`Market Structure:` [...] 
-`Ideal Entry:` N/A → N/A  
-`TP Levels:` N/A → N/A  
-`SL:` N/A  
+`Quantitative Confidence:` {quant_confidence['1h']}%
+`Critical Levels:`
+- POC: ${quant_confidence['poc']:.2f}
+- Liquidation Zone: ${quant_confidence['liq_zone']:.2f}
+`Check:` Volume Spike & Funding Rates
 
-⚠️ CONFIDENCE GUARDRAILS  
-- Verify volume and price action
-- Check macroeconomic factors
-- Confirm with on-chain data"""
+⚠️ MANUAL VERIFICATION STEPS:
+1. Confirm Bollinger Band ({quant_confidence['bb_width']:.2f} width) alignment
+2. Check 1D timeframe liquidity clusters
+3. Verify exchange heatmap data"""
 
 def sanitize_prompt(prompt):
     """Remove problematic characters/terms"""
