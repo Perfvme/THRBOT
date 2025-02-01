@@ -143,8 +143,21 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         analysis_text += f"• Strong Resistance: ${max([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n\n"
 
         # Generate recommendations
-        await update.message.reply_text("🔄 Generating AI recommendations...")
+        # Replace the recommendations line with:
         recommendations = gemini_processor.get_gemini_analysis(analysis_text)
+        if "[VALUE]" in recommendations:
+            quant_data = {
+                '5m': timeframe_data['5m']['quant_confidence'],
+                '1h': timeframe_data['1h']['quant_confidence'],
+                'support': min([ta['ema50'] for ta in timeframe_data.values()]),
+                'resistance': max([ta['ema50'] for ta in timeframe_data.values()]),
+                'rsi': timeframe_data['5m']['rsi'],
+                'macd': timeframe_data['5m']['macd'],
+                'bb_width': timeframe_data['1d']['bb_width'],
+                'poc': timeframe_data['4h']['vpoc_level'],
+                'liq_zone': timeframe_data['1h']['bb_lower']
+            }
+            recommendations = gemini_processor.format_fallback_analysis(raw_symbol, quant_data)
         
         # Format final message
         main_bias = max(
