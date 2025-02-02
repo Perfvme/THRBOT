@@ -7,10 +7,10 @@ def analyze_data(df, symbol):
     try:
         # Convert all dataframe columns to numeric first
         df = df.apply(pd.to_numeric, errors='coerce').ffill()
-        
+
         # Enhanced indicators with explicit type conversion
         df['RSI'] = pd.to_numeric(TA.RSI(df), errors='coerce').rolling(3).mean()
-        
+
         # Add futures market analysis
         futures_data = data_fetcher.get_futures_data(symbol)
         if futures_data:
@@ -30,32 +30,33 @@ def analyze_data(df, symbol):
             df['LIQ_CLUSTERS'] = 0  # Initialize if no futures data
             df['LIQ_SIDE_RATIO'] = 0
             df['LIQ_VOLUME'] = 0
-            
+
             # Calculate impact with zero division protection
             df['LIQUIDATION_IMPACT'] = df['LIQ_VOLUME'] / df['volume'].replace(0, 1e-6)
             if 'open_interest' in df:
                 df['OI_MOMENTUM'] = df['open_interest'].pct_change().rolling(8).mean()
             if 'funding_rate' in df:    
                 df['FUNDING_TREND'] = df['funding_rate'].diff().rolling(4).sum()
+        
         df['EMA_20'] = pd.to_numeric(TA.EMA(df, 20), errors='coerce')
         df['EMA_50'] = pd.to_numeric(TA.EMA(df, 50), errors='coerce')
         df['VWAP'] = pd.to_numeric(TA.VWAP(df), errors='coerce')
         df['OBV'] = pd.to_numeric(TA.OBV(df), errors='coerce').ffill()
         df['ADX'] = pd.to_numeric(TA.ADX(df), errors='coerce')
-        
+
         # Bollinger Bands with type conversion
         bb_upper, bb_mid, bb_lower = TA.BBANDS(df)
         df['BB_UPPER'] = pd.to_numeric(bb_upper, errors='coerce')
         df['BB_MIDDLE'] = pd.to_numeric(bb_mid, errors='coerce')
         df['BB_LOWER'] = pd.to_numeric(bb_lower, errors='coerce')
-        
+
         # Divergence detection
         df['RSI_14'] = TA.RSI(df, 14)
         df['PRICE_DELTA'] = df['close'].diff()
         df['RSI_DELTA'] = df['RSI_14'].diff()
         df['BULLISH_DIVERGENCE'] = (df['PRICE_DELTA'] < 0) & (df['RSI_DELTA'] > 0)
         df['BEARISH_DIVERGENCE'] = (df['PRICE_DELTA'] > 0) & (df['RSI_DELTA'] < 0)
-        
+
         # Enhanced MACD analysis
         macd = TA.MACD(df)
         df['MACD'] = macd['MACD']
@@ -72,7 +73,7 @@ def analyze_data(df, symbol):
         bins = int(price_range / (df['close'].median() * 0.001)) or 100  # Dynamic bin sizing
         df['price_bins'] = pd.cut(df['close'], bins=bins)
         volume_profile = df.groupby('price_bins', observed=False)['volume'].sum()
-        
+
         if not volume_profile.empty:
             vpoc_bin = volume_profile.idxmax()
             df['VPOC_LEVEL'] = vpoc_bin.mid
@@ -80,23 +81,15 @@ def analyze_data(df, symbol):
         else:
             df['VPOC_LEVEL'] = df['VWAP']
             df['VPOC_STRENGTH'] = 0
-            
+
         df['VPOC_DELTA'] = df['VPOC_LEVEL'].diff().rolling(4).mean()
-        
+
         # Integrate with liquidation clusters
         df['VPOC_LIQ_RATIO'] = df['LIQ_CLUSTERS'] / (df['VPOC_STRENGTH'] + 1e-6)
-        
+
         latest = df.iloc[-1]
-        
-        # Calculate signal scores (FIXED 'price' to 'close')
-        bullish_signals = sum([
-            latest['BULLISH_DIVERGENCE'],
-            latest['close'] > latest['BB_UPPER'],
-            latest['EMA_20'] > latest['EMA_50'],
-            latest['RSI'] < 30,
-            latest['MACD'] > 0
-        ])
-        
+
+        # Calculate bullish and bearish signals
         bearish_signals = sum([
             latest['BEARISH_DIVERGENCE'],
             latest['close'] < latest['BB_LOWER'],
@@ -105,8 +98,18 @@ def analyze_data(df, symbol):
             latest['MACD'] < 0
         ])
 
-        return {
-            'price': float(latest['close']),  # Changed from 'price' to 'close'
+        bullish_signals = sum([
+            latest['BULLISH_DIVERGENCE'],
+            latest['close'] > latest['BB_UPPER'],
+            latest['EMA_20'] > latest['EMA_50'],
+            latest['RSI'] < 30,
+            latest['MACD'] > 0
+        ])
+
+        trend_direction = "bullish" if bullish_signals > bearish_signals else "bearish"
+
+        result = {
+            'price': latest['close'],
             'rsi': float(latest['RSI']),
             'ema': float(latest['EMA_20']),
             'ema50': float(latest['EMA_50']),
@@ -127,8 +130,26 @@ def analyze_data(df, symbol):
             'vpoc_liq_ratio': float(latest.get('VPOC_LIQ_RATIO', 0.0)),
             'bullish_score': bullish_signals,
             'bearish_score': bearish_signals,
-            'trend_direction': "bullish" if bullish_signals > bearish_signals else "bearish",
-            'quant_confidence': 0.0  # Will be calculated in bot.py
+            'trend_direction': trend_direction,
+            'quant_confidence': 0.0  # Calculated in bot.py
         }
+
+        # Prepare ML features
+        result['ml_features'] = {
+            'timestamp': int(pd.Timestamp.now().timestamp()*1000),
+            'symbol': symbol,
+            'timeframe': '5m',  # Will be updated in bot.py
+            'rsi': result['rsi'],
+            'ema20': result['ema'],
+            'ema50': result['ema50'],
+            'macd': result['macd'],
+            'adx': result['adx'],
+            'bb_width': result['bb_width'],
+            'liq_impact': result['liq_impact'],
+            'next_5m_return': 0.0,
+            'next_1h_return': 0.0
+        }
+
+        return result
     except Exception as e:
         return {'error': f"Analysis error: {str(e)}"}
