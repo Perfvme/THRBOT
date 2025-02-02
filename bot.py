@@ -1,13 +1,14 @@
+# bot.py
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import data_fetcher
 import analysis
 import gemini_processor
+import ml_model
+import threading
+import time
 from binance.exceptions import BinanceAPIException
-from datetime import datetime
-from apscheduler.schedulers.background import BackgroundScheduler
-import ml_trainer
-import sqlite3
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
 import logging
@@ -20,11 +21,7 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Initialize ML scheduler
-scheduler = BackgroundScheduler()
-scheduler.add_job(ml_trainer.ml_engine.train, 'cron', hour=3)  # Daily training at 3 AM
-scheduler.add_job(ml_trainer.ml_engine.update_outcomes, 'interval', hours=1)
-scheduler.start()
+ml_engine = ml_model.CryptoML()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message with instructions"""
@@ -32,13 +29,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Usage:
 /analyze <coin>  Example: /analyze BTC
-/mlstatus - Show ML system health
 
 Features:
-- Multi-timeframe technical analysis
-- AI-powered LONG/SHORT recommendations
-- Quantitative & ML confidence scoring
-- Risk management guidance""")
+- 5min to 1D timeframe analysis
+- Technical indicators (RSI, EMA, MACD, ADX)
+- AI-powered recommendations with risk management
+- ML-enhanced confidence scoring
+- Support/resistance levels""")
 
 async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle analysis requests"""
@@ -58,7 +55,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         timeframe_data = {}
         
-        # Collect all timeframe data
+        # Collect all timeframe data first
         for tf in timeframes:
             df, error = data_fetcher.get_crypto_data(raw_symbol, tf)
             if error:
@@ -70,71 +67,54 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ Analysis failed: {ta['error']}")
                 return
             
-            # Calculate quantitative confidence
-            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
-            rsi_score = 1 - abs(ta['rsi']-50)/50 if ta['rsi'] else 0.5
-            
-            if ta['trend_direction'] == "bullish":
-                trend_score = 1.0
-                direction_multiplier = 1.0
-            elif ta['trend_direction'] == "bearish":
-                trend_score = 1.0
-                direction_multiplier = -1.0
-            else:
-                trend_score = 0.5
-                direction_multiplier = 0.0
-                
-            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * abs(direction_multiplier) * 100
-            ta['quant_confidence'] = max(0, min(round(quant_confidence, 1), 100))
-            
-            timeframe_data[tf] = ta
-
-            # Save data for ML
-            ml_trainer.ml_engine.save_analysis({
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': raw_symbol,
-                'timeframe': tf,
+            # Add ML confidence
+            current_features = ta['ml_features']
+            current_features['timeframe'] = tf
+            ml_confidence = ml_engine.predict_confidence({
                 'rsi': ta['rsi'],
                 'ema20': ta['ema'],
                 'ema50': ta['ema50'],
                 'macd': ta['macd'],
                 'adx': ta['adx'],
                 'bb_width': ta['bb_width'],
-                'price': ta['price'],
-                'trend_bullish': 1 if ta['trend_direction'] == "bullish" else 0,
-                'trend_bearish': 1 if ta['trend_direction'] == "bearish" else 0,
-                'outcome': None
-            })
+                'liq_impact': ta['liq_impact']
+            }, tf)
+            
+            # Update confidence score
+            ta['quant_confidence'] = (ta['quant_confidence'] * 0.6) + (ml_confidence * 0.4)
+            
+            # Save features (delayed update for returns)
+            if timeframe_data.get(tf):  # Wait for next data point
+                prev = timeframe_data[tf]
+                time_diff = (datetime.now() - datetime.fromtimestamp(prev['ml_features']['timestamp']/1000))
+                
+                if tf == '5m' and time_diff > timedelta(minutes=5):
+                    prev['ml_features']['next_5m_return'] = (ta['price'] - prev['price']) / prev['price']
+                elif tf == '1h' and time_diff > timedelta(hours=1):
+                    prev['ml_features']['next_1h_return'] = (ta['price'] - prev['price']) / prev['price']
+                
+                ml_engine.save_features(prev['ml_features'])
+            
+            timeframe_data[tf] = ta
 
-        # Generate ML predictions
-        ml_confidences = {}
-        for tf in timeframes:
-            features = [
-                timeframe_data[tf]['rsi'],
-                timeframe_data[tf]['ema'],
-                timeframe_data[tf]['ema50'],
-                timeframe_data[tf]['macd'],
-                timeframe_data[tf]['adx'],
-                timeframe_data[tf]['bb_width'],
-                timeframe_data[tf]['price']
-            ]
-            ml_confidences[tf] = ml_trainer.ml_engine.predict(features)
-
-        # Build analysis report
+        # Generate consolidated analysis
         analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
         analysis_text += "```\n"
-        analysis_text += "TF    | Price    | RSI  | Trend  | Q-Conf | ML-Conf\n"
-        analysis_text += "-----------------------------------------------------\n"
+        analysis_text += "TF    | Price    | RSI  | EMA20/50   | MACD     | ADX  | BB Position | Q-Conf\n"
+        analysis_text += "-------------------------------------------------------------------------------\n"
         
         for tf in timeframes:
             ta = timeframe_data[tf]
+            bb_position = "Middle" if (ta['price'] > ta['bb_lower'] and ta['price'] < ta['bb_upper']) else ("Upper" if ta['price'] > ta['bb_upper'] else "Lower")
             analysis_text += (
                 f"{tf.upper().ljust(4)} "
                 f"| ${ta['price']:>7.2f} "
                 f"| {ta['rsi']:>3.0f} "
-                f"| {ta['trend_direction'][:5].ljust(5)} "
-                f"| {ta['quant_confidence']:>5.1f}% "
-                f"| {ml_confidences[tf]:>5.1f}%\n"
+                f"| {ta['ema']:>5.2f}/{ta['ema50']:>5.2f} "
+                f"| {ta['macd']:>+7.4f} "
+                f"| {ta['adx']:>3.0f} "
+                f"| {bb_position.ljust(6)} "
+                f"| {ta['quant_confidence']:>5.1f}%\n"
             )
             
         analysis_text += "```\n\n"
@@ -142,89 +122,62 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         analysis_text += f"• Strong Support: ${min([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n"
         analysis_text += f"• Strong Resistance: ${max([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n\n"
 
-        # Generate recommendations
-        # Replace the recommendations line with:
+        # Trend alignment analysis (Bullish/Bearish/Neutral)
+        trend_strength = {'bullish': 0, 'bearish': 0, 'neutral': 0}
+        
+        for tf in timeframes:
+            ta = timeframe_data[tf]
+            if ta['trend_direction'] == "bullish":
+                trend_strength['bullish'] += 1
+            elif ta['trend_direction'] == "bearish":
+                trend_strength['bearish'] += 1
+            else:
+                trend_strength['neutral'] += 1
+        
+        analysis_text += f"🔀 Trend Consensus: Bullish {trend_strength['bullish']}/5, Bearish {trend_strength['bearish']}/5, Neutral {trend_strength['neutral']}/5\n"
+
+        # Generate AI recommendations based on trend analysis
+        await update.message.reply_text("🔄 Generating AI recommendations...")
         recommendations = gemini_processor.get_gemini_analysis(analysis_text)
-        if "[VALUE]" in recommendations:
-            quant_data = {
-                '5m': timeframe_data['5m']['quant_confidence'],
-                '1h': timeframe_data['1h']['quant_confidence'],
-                'support': min([ta['ema50'] for ta in timeframe_data.values()]),
-                'resistance': max([ta['ema50'] for ta in timeframe_data.values()]),
-                'rsi': timeframe_data['5m']['rsi'],
-                'macd': timeframe_data['5m']['macd'],
-                'bb_width': timeframe_data['1d']['bb_width'],
-                'poc': timeframe_data['4h']['vpoc_level'],
-                'liq_zone': timeframe_data['1h']['bb_lower']
-            }
-            recommendations = gemini_processor.format_fallback_analysis(raw_symbol, quant_data)
         
         # Format final message
-        main_bias = max(
-            [(tf, timeframe_data[tf]['trend_direction']) for tf in timeframes],
-            key=lambda x: timeframe_data[x[0]]['quant_confidence']
-        )[1]
-        
         final_message = f"""
-📈 Final Analysis for {raw_symbol} ({main_bias.upper()} BIAS):
-{recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis:\n" + recommendations}
+📈 Final Analysis for {raw_symbol}:
+{recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis (Verify Manually):\n" + recommendations}
 
-⚖️ Confidence Scores:
-{" | ".join([f"{tf.upper()}: {timeframe_data[tf]['quant_confidence']}%/{ml_confidences[tf]:.1f}%" for tf in ['5m', '1h', '1d']])}
+📊 ML-Enhanced Confidence Scores:
+5m: {timeframe_data['5m']['quant_confidence']}%
+1h: {timeframe_data['1h']['quant_confidence']}% 
+1d: {timeframe_data['1d']['quant_confidence']}%
 
-⚠️ Risk Disclaimer: Crypto markets are volatile. Use stop-losses.
+⚠️ Disclaimer: This is not financial advice. Always do your own research.
         """
         
         await update.message.reply_text(final_message)
 
     except BinanceAPIException as e:
         await update.message.reply_text(f"❌ Binance API Error: {e.message}")
-
     except Exception as e:
-        # Collect quantitative data for fallback
-        quant_data = {
-            '5m': timeframe_data.get('5m', {}).get('quant_confidence', 50),
-            '1h': timeframe_data.get('1h', {}).get('quant_confidence', 50),
-            'support': min([ta.get('ema50', 0) for ta in timeframe_data.values()]),
-            'resistance': max([ta.get('ema50', 0) for ta in timeframe_data.values()]),
-            'rsi': timeframe_data.get('5m', {}).get('rsi', 50),
-            'macd': timeframe_data.get('5m', {}).get('macd', 0),
-            'vpoc': timeframe_data.get('4h', {}).get('vpoc_level', 0),
-            'liq_zone': timeframe_data.get('1h', {}).get('bb_lower', 0),
-            'bb_width': timeframe_data.get('1d', {}).get('bb_width', 0),
-            'adx': timeframe_data.get('1h', {}).get('adx', 0)
-        }
-        fallback_msg = gemini_processor.format_fallback_analysis(raw_symbol, quant_data)
-        await update.message.reply_text(f"⚠️ Partial Analysis:\n{fallback_msg}")
-
-async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show ML system health status"""
-    try:
-        conn = sqlite3.connect('ml_data.db')
-        stats = conn.execute('''
-            SELECT 
-                COUNT(*) AS total,
-                AVG(outcome) AS success_rate,
-                MAX(timestamp) AS last_update
-            FROM analysis_data
-        ''').fetchone()
-        
-        model_size = os.path.getsize('ml_model.pkl')/1024 if os.path.exists('ml_model.pkl') else 0
-        
-        await update.message.reply_text(
-            f"🤖 ML System Status:\n"
-            f"Total Samples: {stats[0]}\n"
-            f"Success Rate: {stats[1]*100:.1f}% (Last 100 trades)\n"
-            f"Last Update: {stats[2]}\n"
-            f"Model Size: {model_size:.1f}KB"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"❌ ML Status Error: {str(e)}")
+        await update.message.reply_text(f"❌ Unexpected error: {str(e)}")
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_coin))
-    app.add_handler(CommandHandler("mlstatus", ml_status))
+    
+    # Start background training scheduler
+    def train_models():
+        while True:
+            try:
+                for tf in ['5m', '1h']:
+                    accuracy = ml_engine.train_model(tf)
+                    print(f"Retrained {tf} model with accuracy: {accuracy:.2f}")
+            except Exception as e:
+                print(f"Training failed: {str(e)}")
+            time.sleep(3600*6)  # Retrain every 6 hours
+
+    training_thread = threading.Thread(target=train_models, daemon=True)
+    training_thread.start()
+    
     print("🤖 Bot is running... Press CTRL+C to stop")
     app.run_polling()
