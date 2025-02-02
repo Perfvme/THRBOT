@@ -206,8 +206,8 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 └───────────┴──────────────┴──────────┘
 
 💡 Market Context:
-├─ Volatility (ATR): ${timeframe_data['5m']['atr']:.2f}
-├─ Uncertainty Band: ±${timeframe_data['5m'].get('suggested_width', 0.0):.2f}
+├─ Volatility (ATR): {timeframe_data['5m']['atr']:.2f}
+├─ Uncertainty Band: ±{timeframe_data['5m'].get('suggested_width', 0.0):.2f}
 └─ Trend Strength: {timeframe_data['1h']['adx']:.0f} ADX
 
 ⚠️ Disclaimer: Not financial advice. Verify levels before trading.
