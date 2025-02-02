@@ -75,6 +75,30 @@ class CryptoML:
         except Exception as e:
             logging.error(f"Preprocessing error: {str(e)}")
             return None, None, None, None
+    def get_data_counts(self):
+        """Get record counts per timeframe"""
+        try:
+            cursor = self.conn.cursor()
+            return {
+                '5m': cursor.execute("SELECT COUNT(*) FROM historical_features WHERE timeframe='5m'").fetchone()[0],
+                '1h': cursor.execute("SELECT COUNT(*) FROM historical_features WHERE timeframe='1h'").fetchone()[0]
+            }
+        except:
+            return {}
+    
+    def get_model_info(self):
+        """Get model metadata"""
+        info = {}
+        for tf in ['5m', '1h']:
+            try:
+                model = joblib.load(f'model_{tf}.joblib')
+                info[tf] = {
+                    'accuracy': model.metadata['accuracy'],
+                    'last_trained': model.metadata['timestamp']
+                }
+            except:
+                continue
+        return info
 
     def train_model(self, timeframe='5m'):
         """Train and save ML model"""
@@ -90,12 +114,11 @@ class CryptoML:
                 random_state=42
             )
             
-            self.model.fit(X_train, y_train)
-            predictions = self.model.predict(X_test)
-            accuracy = accuracy_score(y_test, predictions)
-            
-            # Save model
-            joblib.dump(self.model, f'model_{timeframe}.joblib')
+            model.metadata = {
+                'accuracy': float(accuracy),
+                'timestamp': datetime.now().isoformat()
+            }
+            joblib.dump(model, f'model_{timeframe}.joblib')
             return accuracy
         except Exception as e:
             logging.error(f"Training error: {str(e)}")
