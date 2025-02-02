@@ -1,4 +1,3 @@
-# gemini_processor.py
 import google.generativeai as genai
 import textwrap
 from google.api_core import exceptions as google_exceptions
@@ -22,94 +21,73 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
 def validate_response(text):
-    """Flexible validation with pattern matching"""
-    patterns = [
-        r"SCALP", 
-        r"SWING", 
-        r"PRICE ACTION",
-        r"CONFIDENCE GUARDRAILS",
-        r"Quantitative Confidence",
-        r"AI Confidence"
+    """More flexible validation with case-insensitive checks"""
+    required_sections = [
+        "SCALP", 
+        "SWING", 
+        "Quantitative Confidence",
+        "AI Confidence",
+        "PRICE ACTION NOTES",
+        "CONFIDENCE GUARDRAILS"
     ]
-    return all(re.search(p, text, re.IGNORECASE) for p in patterns)
-
-def format_fallback_analysis(symbol, quant_confidence):
-    """Fallback template with actual values"""
-    return f"""🔍 MANUAL VERIFICATION REQUIRED ({symbol})
-
-🚀 SCALP (5-15m)
-`Quant Conf:` {quant_confidence['5m']}%
-`Key Levels:` {quant_confidence['support']:.2f}-{quant_confidence['resistance']:.2f}
-`RSI:` {quant_confidence['rsi']} | `MACD:` {quant_confidence['macd']:+.2f}
-
-🌙 SWING (1-4H)  
-`Quant Conf:` {quant_confidence['1h']}%
-`VPOC:` {quant_confidence['vpoc']:.2f}
-`Liquidation Zone:` {quant_confidence['liq_zone']:.2f}
-
-⚠️ CHECK: BB Width ({quant_confidence['bb_width']:.3f}) & ADX ({quant_confidence['adx']})"""
-
-def sanitize_prompt(prompt):
-    """Remove problematic characters/terms"""
-    replacements = {
-        "SHORT": "DOWNTREND",
-        "LONG": "UPTREND",
-        "STOP LOSS": "RISK LEVEL",
-        "LIQUIDATION": "VOLUME CLUSTER"
-    }
-    for k, v in replacements.items():
-        prompt = prompt.replace(k, v)
-    return prompt
+    
+    text_lower = text.lower()
+    return all(section.lower() in text_lower for section in required_sections)
 
 def get_gemini_analysis(prompt):
     try:
-        # Clean and truncate prompt
-        clean_prompt = sanitize_prompt(prompt)
-        truncated_prompt = textwrap.shorten(clean_prompt, width=15000, placeholder="... [truncated]")
-        
-        # First attempt with full template
+        truncated_prompt = textwrap.shorten(prompt, width=30000, placeholder="... [truncated]")
+
         response = model.generate_content(
-            f"""STRICT FORMAT REQUIRED! ANALYZE THIS MARKET DATA:
+            f"""ANALYSIS FORMAT REQUIREMENTS:
+1. MUST INCLUDE ALL SECTIONS: SCALP, SWING, PRICE ACTION NOTES, CONFIDENCE GUARDRAILS
+2. USE EXACT SECTION HEADERS FROM BELOW
+3. ALWAYS SHOW QUANTITATIVE AND AI CONFIDENCE
+
 {truncated_prompt}
 
-MANDATORY SECTIONS:
-1. 🚀 SCALP ANALYSIS
-2. 🌙 SWING ANALYSIS  
-3. 🔍 PRICE ACTION NOTES
-4. ⚠️ RISK FACTORS
+*MANDATORY RESPONSE STRUCTURE:*
 
-INCLUDE THESE METRICS IN EACH SECTION:
-- Quantitative Confidence %
-- AI Confidence %
-- Key Levels
-- Volume Analysis""",
-            generation_config={"temperature": 0.4}
+🚀 *SCALP (5-15m)*
+`Quantitative Confidence:` [VALUE]%
+`AI Confidence:` [VALUE]%
+`Strength:` [▲ High/► Medium/▼ Low] (ADX VALUE)  
+`Entry Strategy:`  
+[🟢 Wait for retest of LEVEL | 🔴 Breakout above LEVEL | ⏳ Rebound from LEVEL]  
+[🔴 Invalidation below LEVEL] 
+`Ideal Entry:` LEVEL-LEVEL 
+`Targets:` LEVEL → LEVEL  
+`Stop:` LEVEL (-X.X%)  
+
+🌙 *SWING (1-4H)*  
+`Quantitative Confidence:` [VALUE]%
+`AI Confidence:` [VALUE]%
+`Market Structure: [...] 
+[🔼 Breakout needed | ⏸️ Consolidation | 🔻 Pullback]  
+`Ideal Entry:` LEVEL-LEVEL  
+`TP Levels:` LEVEL → LEVEL  
+`SL:` LEVEL (-X.X%)  
+
+🔍 *PRICE ACTION NOTES*  
+1. Bullish signs identified based on [...]
+2. Bearish signs identified based on [...]
+
+⚠️ *CONFIDENCE GUARDRAILS*  
+- [Summary of conditions for buying and selling]
+"""
         )
-        
-        # First validation pass
+
         if validate_response(response.text):
             return response.text
-            
-        # Retry with simplified prompt
-        retry_response = model.generate_content(
-            f"""SIMPLIFIED ANALYSIS OF:
-{truncated_prompt}
-
-USE THIS TEMPLATE:
-[SCALP] Direction|Confidence|Key Levels|ideal entry|stop|target
-[SWING] Trend|Entry Zones|Risk|stop|target|confidence
-[NOTES] Key Observations""",
-            generation_config={"temperature": 0.2}
-        )
-        
-        # Final validation check
-        if validate_response(retry_response.text):
-            return retry_response.text
-            
-        # Fallback to template
-        return format_fallback_analysis("UNKNOWN")
+        else:
+            # Attempt recovery for common missing elements
+            recovery_text = response.text.replace("Quant Confidence", "Quantitative Confidence")
+            recovery_text = recovery_text.replace("AI Conf", "AI Confidence")
+            if validate_response(recovery_text):
+                return recovery_text
+            return "⚠️ AI generated incomplete analysis. Check technicals manually."
             
     except google_exceptions.InvalidArgument as e:
-        return f"⚠️ Analysis truncated due to length constraints"
+        return f"❌ Message too long ({len(prompt)} chars). Max 30k characters."
     except Exception as e:
-        return format_fallback_analysis("ERROR")
+        return f"❌ API Error: {str(e)}"
