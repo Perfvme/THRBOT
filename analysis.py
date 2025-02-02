@@ -131,7 +131,8 @@ def analyze_data(df, symbol):
             'bullish_score': bullish_signals,
             'bearish_score': bearish_signals,
             'trend_direction': trend_direction,
-            'quant_confidence': 0.0  # Calculated in bot.py
+            'quant_confidence': 0.0,  # Original quantitative score
+            'ml_confidence': 0.0      # New ML confidence score
         }
 
         # Prepare ML features
