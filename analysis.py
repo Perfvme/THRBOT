@@ -135,7 +135,7 @@ def analyze_data(df, symbol):
         }
 
         # Prepare ML features
-        result['ml_features'] = {
+        ml_features = {
             'timestamp': int(pd.Timestamp.now().timestamp()*1000),
             'symbol': symbol,
             'timeframe': '5m',  # Will be updated in bot.py
@@ -146,9 +146,11 @@ def analyze_data(df, symbol):
             'adx': result['adx'],
             'bb_width': result['bb_width'],
             'liq_impact': result['liq_impact'],
-            'next_5m_return': 0.0,
+            'next_5m_return': 0.0,  # Updated in bot.py after time passes
             'next_1h_return': 0.0
         }
+        
+        result['ml_features'] = ml_features
 
         return result
     except Exception as e:
