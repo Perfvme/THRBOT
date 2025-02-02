@@ -33,8 +33,8 @@ Commands:
 
 Features:
 - Quantitative + ML confidence scores
-- Multi-timeframe analysis
-- AI-powered recommendations
+- Precision technical recommendations
+- AI-powered trade strategies
 - Real-time system monitoring""")
 
 async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,11 +58,11 @@ async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"  Last trained: {model_info[tf]['last_trained']}\n"
                 )
         
-        if not model_info:
-            status_text += "\n⚠️ Models not trained yet (collecting data)"
-        
         status_text += "\n⚙️ System Status: "
-        status_text += "Operational" if data_counts.get('5m', 0) > 100 else "Initializing"
+        if data_counts.get('5m', 0) > 1000 and data_counts.get('1h', 0) > 500:
+            status_text += "Operational ✅"
+        else:
+            status_text += "Initializing... ⏳ (Needs more data)"
         
         await update.message.reply_text(status_text)
         
@@ -86,6 +86,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         timeframe_data = {}
+        current_price = 0.0
         
         # Collect all timeframe data first
         for tf in timeframes:
@@ -99,11 +100,12 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ Analysis failed: {ta['error']}")
                 return
             
-            # Get the trend strength for bullish and bearish signals
+            current_price = ta['price'] if tf == '5m' else current_price
+            
+            # Calculate quantitative confidence
             bullish_signals = ta['bullish_score']
             bearish_signals = ta['bearish_score']
             
-            # Determine the trend direction and set a multiplier for confidence scaling
             if bullish_signals > bearish_signals:
                 trend_score = 1.0
                 direction_multiplier = 1.0
@@ -114,30 +116,33 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 trend_score = 0.5
                 direction_multiplier = 0.0
 
-            # Calculate original quantitative confidence
             adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
             rsi_score = 1 - abs(ta['rsi'] - 50) / 50 if ta['rsi'] else 0.5
             quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * abs(direction_multiplier) * 100
             ta['quant_confidence'] = max(-100, min(round(quant_confidence, 1), 100))
             
-            # Add ML confidence
-            current_features = ta['ml_features']
-            current_features['timeframe'] = tf
-            ml_confidence = ml_engine.predict_confidence({
+            # Get ML confidence
+            ml_result = ml_engine.predict_confidence({
                 'rsi': ta['rsi'],
                 'ema20': ta['ema'],
                 'ema50': ta['ema50'],
                 'macd': ta['macd'],
                 'adx': ta['adx'],
                 'bb_width': ta['bb_width'],
-                'liq_impact': ta['liq_impact']
+                'liq_impact': ta['liq_impact'],
+                'volume': ta['ml_features']['volume'],
+                'vwap': ta['vwap'],
+                'atr': ta['atr']
             }, tf)
-            ta['ml_confidence'] = ml_confidence
             
-            # Save features (delayed update for returns)
+            ta['ml_confidence'] = ml_result['confidence']
+            ta['ml_uncertainty'] = ml_result['uncertainty']
+            ta['suggested_width'] = ml_result['suggested_width']
+            
+            # Save features for next cycle
             if timeframe_data.get(tf):
                 prev = timeframe_data[tf]
-                time_diff = (datetime.now() - datetime.fromtimestamp(prev['ml_features']['timestamp']/1000))
+                time_diff = datetime.now() - datetime.fromtimestamp(prev['ml_features']['timestamp']/1000)
                 
                 if tf == '5m' and time_diff > timedelta(minutes=5):
                     prev['ml_features']['next_5m_return'] = (ta['price'] - prev['price']) / prev['price']
@@ -151,8 +156,8 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate consolidated analysis
         analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
         analysis_text += "```\n"
-        analysis_text += "TF    | Price    | RSI  | EMA20/50   | MACD     | ADX  | BB Position\n"
-        analysis_text += "---------------------------------------------------------------------\n"
+        analysis_text += "TF    | Price    | RSI  | EMA20/50   | ADX  | BB Position\n"
+        analysis_text += "---------------------------------------------------------\n"
         
         for tf in timeframes:
             ta = timeframe_data[tf]
@@ -162,45 +167,52 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"| ${ta['price']:>7.2f} "
                 f"| {ta['rsi']:>3.0f} "
                 f"| {ta['ema']:>5.2f}/{ta['ema50']:>5.2f} "
-                f"| {ta['macd']:>+7.4f} "
                 f"| {ta['adx']:>3.0f} "
                 f"| {bb_position.ljust(6)}\n"
             )
             
         analysis_text += "```\n\n"
         analysis_text += f"🔑 Key Levels:\n"
-        analysis_text += f"• Strong Support: ${min([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n"
-        analysis_text += f"• Strong Resistance: ${max([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n\n"
-
-        # Trend alignment analysis
-        trend_strength = {'bullish': 0, 'bearish': 0}
-        for tf in timeframes:
-            ta = timeframe_data[tf]
-            if ta['trend_direction'] == "bullish":
-                trend_strength['bullish'] += 1
-            else:
-                trend_strength['bearish'] += 1
-        
-        analysis_text += f"🔀 Trend Consensus: Bullish {trend_strength['bullish']}/5 vs Bearish {trend_strength['bearish']}/5\n"
+        analysis_text += f"• Strong Support: ${ta['swing_low']:.2f} (Swing Low)\n"
+        analysis_text += f"• Strong Resistance: ${ta['swing_high']:.2f} (Swing High)\n"
+        analysis_text += f"• Fib 0.618: ${ta['fib_618']:.2f}\n\n"
 
         # Generate AI recommendations
         await update.message.reply_text("🔄 Generating AI recommendations...")
-        recommendations = gemini_processor.get_gemini_analysis(analysis_text)
+        recommendations = gemini_processor.get_gemini_analysis(
+            analysis_text,
+            timeframe_data['5m']
+        )
+        
+        # Validate recommendations
+        valid_recommendations = gemini_processor.validate_recommendations(
+            recommendations, 
+            current_price
+        )
         
         # Format final message
         final_message = f"""
-📈 Final Analysis for {raw_symbol}:
-{recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis (Verify Manually):\n" + recommendations}
+📈 {raw_symbol} Analysis (${current_price:.2f})
+
+🎯 Precision Recommendations:
+{valid_recommendations['sanitized'] if valid_recommendations['is_valid'] else "⚠️ Verify Manually"}
 
 📊 Confidence Scores:
-│           │ Quantitative │ ML Model │
+┌───────────┬──────────────┬──────────┐
+│ Timeframe │ Quantitative │   ML     │
 ├───────────┼──────────────┼──────────┤
-│ 5m       │ {timeframe_data['5m']['quant_confidence']:>5.1f}%     │ {timeframe_data['5m']['ml_confidence']:>5.1f}% │
-│ 1h       │ {timeframe_data['1h']['quant_confidence']:>5.1f}%     │ {timeframe_data['1h']['ml_confidence']:>5.1f}% │ 
-│ 1d       │ {timeframe_data['1d']['quant_confidence']:>5.1f}%     │ {'N/A':^8} │
+│   5m      │ {timeframe_data['5m']['quant_confidence']:>5.1f}%     │ {timeframe_data['5m']['ml_confidence']:>5.1f}% │
+│   1h      │ {timeframe_data['1h']['quant_confidence']:>5.1f}%     │ {timeframe_data['1h']['ml_confidence']:>5.1f}% │ 
+└───────────┴──────────────┴──────────┘
 
-⚠️ Disclaimer: This is not financial advice.
-"""        
+💡 Market Context:
+├─ Volatility (ATR): ${timeframe_data['5m']['atr']:.2f}
+├─ Uncertainty Band: ±${timeframe_data['5m']['suggested_width']:.2f}
+└─ Trend Strength: {timeframe_data['1h']['adx']:.0f} ADX
+
+⚠️ Disclaimer: Not financial advice. Verify levels before trading.
+        """
+        
         await update.message.reply_text(final_message)
 
     except BinanceAPIException as e:
@@ -218,12 +230,14 @@ if __name__ == '__main__':
     def train_models():
         while True:
             try:
+                print("🔁 Starting model retraining...")
                 for tf in ['5m', '1h']:
                     accuracy = ml_engine.train_model(tf)
-                    print(f"Retrained {tf} model with accuracy: {accuracy:.2f}")
+                    print(f"✅ Retrained {tf} model | Accuracy: {accuracy:.2f}")
+                print("🕒 Next training in 6 hours...")
             except Exception as e:
-                print(f"Training failed: {str(e)}")
-            time.sleep(3600*6)  # Retrain every 6 hours
+                print(f"❌ Training failed: {str(e)}")
+            time.sleep(3600*6)  # 6 hours
 
     training_thread = threading.Thread(target=train_models, daemon=True)
     training_thread.start()
