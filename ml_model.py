@@ -31,6 +31,7 @@ class CryptoML:
                     timestamp INTEGER PRIMARY KEY,
                     symbol TEXT,
                     timeframe TEXT,
+                    price REAL,
                     rsi REAL,
                     ema20 REAL,
                     ema50 REAL,
@@ -38,6 +39,12 @@ class CryptoML:
                     adx REAL,
                     bb_width REAL,
                     liq_impact REAL,
+                    volume REAL,
+                    vwap REAL,
+                    fib_236 REAL,
+                    fib_618 REAL,
+                    swing_high REAL,
+                    swing_low REAL,
                     next_5m_return REAL,
                     next_1h_return REAL
                 )
@@ -51,6 +58,7 @@ class CryptoML:
         try:
             df = pd.DataFrame([features])
             df.to_sql('historical_features', self.conn, if_exists='append', index=False)
+            self.conn.commit()
         except Exception as e:
             logging.error(f"Feature save error: {str(e)}")
 
@@ -68,37 +76,15 @@ class CryptoML:
                 return None, None, None, None
                 
             data['target'] = np.where(data['next_5m_return' if timeframe == '5m' else 'next_1h_return'] > 0, 1, 0)
-            features = data[['rsi', 'ema20', 'ema50', 'macd', 'adx', 'bb_width', 'liq_impact']]
+            features = data[['rsi', 'ema20', 'ema50', 'macd', 'adx', 'bb_width', 
+                            'liq_impact', 'volume', 'vwap', 'fib_236', 'fib_618',
+                            'swing_high', 'swing_low']]
             labels = data['target']
             
             return train_test_split(features, labels, test_size=0.2, shuffle=False)
         except Exception as e:
             logging.error(f"Preprocessing error: {str(e)}")
             return None, None, None, None
-    def get_data_counts(self):
-        """Get record counts per timeframe"""
-        try:
-            cursor = self.conn.cursor()
-            return {
-                '5m': cursor.execute("SELECT COUNT(*) FROM historical_features WHERE timeframe='5m'").fetchone()[0],
-                '1h': cursor.execute("SELECT COUNT(*) FROM historical_features WHERE timeframe='1h'").fetchone()[0]
-            }
-        except:
-            return {}
-    
-    def get_model_info(self):
-        """Get model metadata"""
-        info = {}
-        for tf in ['5m', '1h']:
-            try:
-                model = joblib.load(f'model_{tf}.joblib')
-                info[tf] = {
-                    'accuracy': model.metadata['accuracy'],
-                    'last_trained': model.metadata['timestamp']
-                }
-            except:
-                continue
-        return info
 
     def train_model(self, timeframe='5m'):
         """Train and save ML model"""
@@ -114,25 +100,80 @@ class CryptoML:
                 random_state=42
             )
             
-            model.metadata = {
+            self.model.fit(X_train, y_train)
+            predictions = self.model.predict(X_test)
+            accuracy = accuracy_score(y_test, predictions)
+            
+            # Add metadata
+            self.model.metadata = {
                 'accuracy': float(accuracy),
                 'timestamp': datetime.now().isoformat()
             }
-            joblib.dump(model, f'model_{timeframe}.joblib')
+            
+            # Save model
+            joblib.dump(self.model, f'model_{timeframe}.joblib')
             return accuracy
         except Exception as e:
             logging.error(f"Training error: {str(e)}")
             return 0.0
 
     def predict_confidence(self, current_features, timeframe='5m'):
-        """Make prediction and return confidence score"""
+        """Make prediction and return confidence metrics"""
         try:
             model_path = f'model_{timeframe}.joblib'
             self.model = joblib.load(model_path)
             
-            df = pd.DataFrame([current_features])
+            # Add context features
+            context_features = {
+                'volatility': current_features['bb_width'] * 100,
+                'volume_ratio': (current_features['volume'] / 
+                               self.conn.execute(f'''
+                                   SELECT AVG(volume) 
+                                   FROM historical_features 
+                                   WHERE timeframe='{timeframe}'
+                               ''').fetchone()[0]),
+                'price_vs_vwap': current_features['price'] / current_features['vwap']
+            }
+            
+            full_features = {**current_features, **context_features}
+            df = pd.DataFrame([full_features])
+            
             proba = self.model.predict_proba(df)[0]
-            return float(np.max(proba)*100)
+            confidence = float(np.max(proba)*100)
+            uncertainty = float((1 - (np.max(proba) - np.min(proba)))*100)
+            
+            return {
+                'confidence': confidence,
+                'uncertainty': uncertainty,
+                'suggested_width': 0.5 * uncertainty/100 * current_features['atr']
+            }
         except Exception as e:
             logging.error(f"Prediction error: {str(e)}")
-            return 50.0  # Fallback neutral confidence
+            return {'confidence': 50.0, 'uncertainty': 100.0, 'suggested_width': None}
+
+    def get_data_counts(self):
+        """Get record counts per timeframe"""
+        try:
+            cursor = self.conn.cursor()
+            return {
+                '5m': cursor.execute("SELECT COUNT(*) FROM historical_features WHERE timeframe='5m'").fetchone()[0],
+                '1h': cursor.execute("SELECT COUNT(*) FROM historical_features WHERE timeframe='1h'").fetchone()[0]
+            }
+        except Exception as e:
+            logging.error(f"Data count error: {str(e)}")
+            return {}
+
+    def get_model_info(self):
+        """Get model metadata"""
+        info = {}
+        for tf in ['5m', '1h']:
+            try:
+                model = joblib.load(f'model_{tf}.joblib')
+                info[tf] = {
+                    'accuracy': model.metadata.get('accuracy', 0),
+                    'last_trained': model.metadata.get('timestamp', 'Never')
+                }
+            except Exception as e:
+                logging.error(f"Model info error ({tf}): {str(e)}")
+                continue
+        return info
