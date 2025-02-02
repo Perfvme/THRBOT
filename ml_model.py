@@ -146,10 +146,10 @@ class CryptoML:
             'confidence': confidence,
             'uncertainty': uncertainty,
             'suggested_width': 0.5 * uncertainty/100 * current_features.get('atr', 0.0)
-        }
-    except Exception as e:
-        logging.error(f"Prediction error: {str(e)}")
-        return {'confidence': 50.0, 'uncertainty': 100.0, 'suggested_width': 0.0}  # Changed None to 0.0
+            }
+        except Exception as e:
+            logging.error(f"Prediction error: {str(e)}")
+            return {'confidence': 50.0, 'uncertainty': 100.0, 'suggested_width': 0.0}  # Changed None to 0.0
 
     def get_data_counts(self):
         """Get record counts per timeframe"""
