@@ -212,7 +212,6 @@ final_message = f"""
 
 ⚠️ Disclaimer: Not financial advice. Verify levels before trading.
 """
-        
         await update.message.reply_text(final_message)
 
     except BinanceAPIException as e:
