@@ -191,7 +191,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Format final message
-final_message = f"""
+        final_message = f"""
 📈 {raw_symbol} Analysis (${current_price:.2f})
 
 🎯 Precision Recommendations:
