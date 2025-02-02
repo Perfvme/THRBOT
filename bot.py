@@ -191,7 +191,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Format final message
-        final_message = f"""
+final_message = f"""
 📈 {raw_symbol} Analysis (${current_price:.2f})
 
 🎯 Precision Recommendations:
@@ -201,17 +201,17 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ┌───────────┬──────────────┬──────────┐
 │ Timeframe │ Quantitative │   ML     │
 ├───────────┼──────────────┼──────────┤
-│   5m      │ {timeframe_data['5m']['quant_confidence']:>5.1f}%     │ {timeframe_data['5m']['ml_confidence']:>5.1f}% │
-│   1h      │ {timeframe_data['1h']['quant_confidence']:>5.1f}%     │ {timeframe_data['1h']['ml_confidence']:>5.1f}% │ 
+│   5m      │ {timeframe_data['5m']['quant_confidence'] or 0.0:>5.1f}%     │ {timeframe_data['5m']['ml_confidence'] or 0.0:>5.1f}% │
+│   1h      │ {timeframe_data['1h']['quant_confidence'] or 0.0:>5.1f}%     │ {timeframe_data['1h']['ml_confidence'] or 0.0:>5.1f}% │ 
 └───────────┴──────────────┴──────────┘
 
 💡 Market Context:
 ├─ Volatility (ATR): ${timeframe_data['5m']['atr']:.2f}
-├─ Uncertainty Band: ±${timeframe_data['5m']['suggested_width']:.2f}
+├─ Uncertainty Band: ±${timeframe_data['5m'].get('suggested_width', 0.0):.2f}
 └─ Trend Strength: {timeframe_data['1h']['adx']:.0f} ADX
 
 ⚠️ Disclaimer: Not financial advice. Verify levels before trading.
-        """
+"""
         
         await update.message.reply_text(final_message)
 
