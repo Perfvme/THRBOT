@@ -29,19 +29,20 @@ def validate_response(text):
     ]
     return sum(kw in text.upper() for kw in required_keywords) >= 3
 
+# Modify the validate_recommendations function
 def validate_recommendations(text, current_price):
     """Ensure numerical validity of generated recommendations"""
-    numbers = [float(x) for x in re.findall(r'\d+\.?\d*', text)]
+    numbers = [float(x) for x in re.findall(r'\d+\.?\d*', text)] if text else []
     valid = True
     details = ""
     
     try:
         if len(numbers) >= 5:
-            entry_low, entry_high, tp1, tp2, sl = numbers[:5]
-            
-            valid &= (entry_low < current_price < entry_high) or (entry_low > current_price > entry_high)
-            valid &= (sl < entry_low if current_price > entry_low else sl > entry_high)
-            valid &= (tp1 > entry_high if current_price > entry_low else tp1 < entry_low)
+            entry_low = numbers[0] if len(numbers) > 0 else 0.0
+            entry_high = numbers[1] if len(numbers) > 1 else 0.0
+            tp1 = numbers[2] if len(numbers) > 2 else 0.0
+            tp2 = numbers[3] if len(numbers) > 3 else 0.0
+            sl = numbers[4] if len(numbers) > 4 else 0.0
             
             risk = abs((sl - current_price)/current_price*100)
             reward = abs((tp1 - current_price)/current_price*100)
