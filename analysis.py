@@ -2,7 +2,6 @@
 import pandas as pd
 from finta import TA
 import data_fetcher
-import numpy as np
 
 def analyze_data(df, symbol):
     try:
@@ -88,22 +87,6 @@ def analyze_data(df, symbol):
         # Integrate with liquidation clusters
         df['VPOC_LIQ_RATIO'] = df['LIQ_CLUSTERS'] / (df['VPOC_STRENGTH'] + 1e-6)
 
-        # Precision Enhancement 1: Fibonacci Levels
-        max_price = df['high'].max()
-        min_price = df['low'].min()
-        diff = max_price - min_price
-        df['FIB_0.236'] = max_price - diff * 0.236
-        df['FIB_0.5'] = max_price - diff * 0.5
-        df['FIB_0.618'] = max_price - diff * 0.618
-
-        # Precision Enhancement 2: Volume-Weighted Price Levels
-        df['VWAP_DEV2'] = df['VWAP'] + (2 * df['VWAP'].std())
-        df['VWAP_DEV-2'] = df['VWAP'] - (2 * df['VWAP'].std())
-
-        # Precision Enhancement 3: Recent Swing Points
-        df['SWING_HIGH'] = df['high'].rolling(5, center=True).max()
-        df['SWING_LOW'] = df['low'].rolling(5, center=True).min()
-
         latest = df.iloc[-1]
 
         # Calculate bullish and bearish signals
@@ -148,23 +131,15 @@ def analyze_data(df, symbol):
             'bullish_score': bullish_signals,
             'bearish_score': bearish_signals,
             'trend_direction': trend_direction,
-            'quant_confidence': 0.0,
-            'ml_confidence': 0.0,
-            'fib_236': float(latest['FIB_0.236']),
-            'fib_500': float(latest['FIB_0.5']),
-            'fib_618': float(latest['FIB_0.618']),
-            'vwap_dev2': float(latest['VWAP_DEV2']),
-            'vwap_dev-2': float(latest['VWAP_DEV-2']),
-            'swing_high': float(latest['SWING_HIGH']),
-            'swing_low': float(latest['SWING_LOW'])
+            'quant_confidence': 0.0,  # Original quantitative score
+            'ml_confidence': 0.0      # New ML confidence score
         }
 
         # Prepare ML features
         ml_features = {
             'timestamp': int(pd.Timestamp.now().timestamp()*1000),
             'symbol': symbol,
-            'timeframe': '5m',
-            'price': result['price'],
+            'timeframe': '5m',  # Will be updated in bot.py
             'rsi': result['rsi'],
             'ema20': result['ema'],
             'ema50': result['ema50'],
@@ -172,13 +147,7 @@ def analyze_data(df, symbol):
             'adx': result['adx'],
             'bb_width': result['bb_width'],
             'liq_impact': result['liq_impact'],
-            'volume': float(latest['volume']),
-            'vwap': result['vwap'],
-            'fib_236': result['fib_236'],
-            'fib_618': result['fib_618'],
-            'swing_high': result['swing_high'],
-            'swing_low': result['swing_low'],
-            'next_5m_return': 0.0,
+            'next_5m_return': 0.0,  # Updated in bot.py after time passes
             'next_1h_return': 0.0
         }
         
