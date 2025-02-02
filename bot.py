@@ -80,8 +80,29 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'liq_impact': ta['liq_impact']
             }, tf)
             
-            # Update confidence score
-            ta['quant_confidence'] = (ta['quant_confidence'] * 0.6) + (ml_confidence * 0.4)
+            # Get the trend strength for bullish and bearish signals
+            bullish_signals = ta['bullish_score']
+            bearish_signals = ta['bearish_score']
+            
+            # Determine the trend direction and set a multiplier for confidence scaling
+            if bullish_signals > bearish_signals:
+                trend_score = 1.0
+                direction_multiplier = 1.0  # Positive multiplier for bullish
+            elif bearish_signals > bullish_signals:
+                trend_score = 1.0
+                direction_multiplier = -1.0  # Negative multiplier for bearish
+            else:
+                trend_score = 0.5
+                direction_multiplier = 0.0  # Neutral, no clear direction
+
+            # Calculate quantitative confidence with direction multiplier
+            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
+            rsi_score = 1 - abs(ta['rsi'] - 50) / 50 if ta['rsi'] else 0.5
+
+            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * abs(direction_multiplier) * 100
+            ta['quant_confidence'] = max(-100, min(round(quant_confidence, 1), 100))  # Cap the confidence between -100 and 100
+
+            timeframe_data[tf] = ta
             
             # Save features (delayed update for returns)
             if timeframe_data.get(tf):  # Wait for next data point
