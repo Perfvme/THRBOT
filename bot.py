@@ -27,15 +27,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message with instructions"""
     await update.message.reply_text("""🚀 Crypto Analysis Bot 🚀
 
-Usage:
-/analyze <coin>  Example: /analyze BTC
+Commands:
+/analyze <coin> - Analyze cryptocurrency
+/mlstatus - Show machine learning system status
 
 Features:
-- 5min to 1D timeframe analysis
-- Technical indicators (RSI, EMA, MACD, ADX)
-- AI-powered recommendations with risk management
-- ML-enhanced confidence scoring
-- Support/resistance levels""")
+- Quantitative + ML confidence scores
+- Multi-timeframe analysis
+- AI-powered recommendations
+- Real-time system monitoring""")
+
+async def ml_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Report ML system status"""
+    try:
+        status_text = "🤖 Machine Learning System Status\n\n"
+        
+        # Get training data stats
+        data_counts = ml_engine.get_data_counts()
+        status_text += f"📊 Training Data:\n"
+        status_text += f"- 5m timeframe: {data_counts.get('5m', 0)} samples\n"
+        status_text += f"- 1h timeframe: {data_counts.get('1h', 0)} samples\n"
+        
+        # Get model info
+        model_info = ml_engine.get_model_info()
+        status_text += "\n🧠 Model Performance:\n"
+        for tf in ['5m', '1h']:
+            if tf in model_info:
+                status_text += (
+                    f"- {tf} model: {model_info[tf]['accuracy']:.1f}% accuracy\n"
+                    f"  Last trained: {model_info[tf]['last_trained']}\n"
+                )
+        
+        if not model_info:
+            status_text += "\n⚠️ Models not trained yet (collecting data)"
+        
+        status_text += "\n⚙️ System Status: "
+        status_text += "Operational" if data_counts.get('5m', 0) > 100 else "Initializing"
+        
+        await update.message.reply_text(status_text)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Status check failed: {str(e)}")
 
 async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle analysis requests"""
@@ -67,6 +99,27 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ Analysis failed: {ta['error']}")
                 return
             
+            # Get the trend strength for bullish and bearish signals
+            bullish_signals = ta['bullish_score']
+            bearish_signals = ta['bearish_score']
+            
+            # Determine the trend direction and set a multiplier for confidence scaling
+            if bullish_signals > bearish_signals:
+                trend_score = 1.0
+                direction_multiplier = 1.0
+            elif bearish_signals > bullish_signals:
+                trend_score = 1.0
+                direction_multiplier = -1.0
+            else:
+                trend_score = 0.5
+                direction_multiplier = 0.0
+
+            # Calculate original quantitative confidence
+            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
+            rsi_score = 1 - abs(ta['rsi'] - 50) / 50 if ta['rsi'] else 0.5
+            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * abs(direction_multiplier) * 100
+            ta['quant_confidence'] = max(-100, min(round(quant_confidence, 1), 100))
+            
             # Add ML confidence
             current_features = ta['ml_features']
             current_features['timeframe'] = tf
@@ -79,33 +132,10 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'bb_width': ta['bb_width'],
                 'liq_impact': ta['liq_impact']
             }, tf)
-            
-            # Get the trend strength for bullish and bearish signals
-            bullish_signals = ta['bullish_score']
-            bearish_signals = ta['bearish_score']
-            
-            # Determine the trend direction and set a multiplier for confidence scaling
-            if bullish_signals > bearish_signals:
-                trend_score = 1.0
-                direction_multiplier = 1.0  # Positive multiplier for bullish
-            elif bearish_signals > bullish_signals:
-                trend_score = 1.0
-                direction_multiplier = -1.0  # Negative multiplier for bearish
-            else:
-                trend_score = 0.5
-                direction_multiplier = 0.0  # Neutral, no clear direction
-
-            # Calculate quantitative confidence with direction multiplier
-            adx_score = min(ta['adx']/60, 1) if ta['adx'] else 0
-            rsi_score = 1 - abs(ta['rsi'] - 50) / 50 if ta['rsi'] else 0.5
-
-            quant_confidence = ((adx_score * 0.3) + (rsi_score * 0.2) + (trend_score * 0.5)) * abs(direction_multiplier) * 100
-            ta['quant_confidence'] = max(-100, min(round(quant_confidence, 1), 100))  # Cap the confidence between -100 and 100
-
-            timeframe_data[tf] = ta
+            ta['ml_confidence'] = ml_confidence
             
             # Save features (delayed update for returns)
-            if timeframe_data.get(tf):  # Wait for next data point
+            if timeframe_data.get(tf):
                 prev = timeframe_data[tf]
                 time_diff = (datetime.now() - datetime.fromtimestamp(prev['ml_features']['timestamp']/1000))
                 
@@ -121,8 +151,8 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate consolidated analysis
         analysis_text = f"📊 *{raw_symbol} Multi-Timeframe Analysis*\n\n"
         analysis_text += "```\n"
-        analysis_text += "TF    | Price    | RSI  | EMA20/50   | MACD     | ADX  | BB Position | Q-Conf\n"
-        analysis_text += "-------------------------------------------------------------------------------\n"
+        analysis_text += "TF    | Price    | RSI  | EMA20/50   | MACD     | ADX  | BB Position\n"
+        analysis_text += "---------------------------------------------------------------------\n"
         
         for tf in timeframes:
             ta = timeframe_data[tf]
@@ -134,8 +164,7 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"| {ta['ema']:>5.2f}/{ta['ema50']:>5.2f} "
                 f"| {ta['macd']:>+7.4f} "
                 f"| {ta['adx']:>3.0f} "
-                f"| {bb_position.ljust(6)} "
-                f"| {ta['quant_confidence']:>5.1f}%\n"
+                f"| {bb_position.ljust(6)}\n"
             )
             
         analysis_text += "```\n\n"
@@ -143,21 +172,18 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         analysis_text += f"• Strong Support: ${min([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n"
         analysis_text += f"• Strong Resistance: ${max([ta['ema50'] for ta in timeframe_data.values()]):.2f}\n\n"
 
-        # Trend alignment analysis (Bullish/Bearish/Neutral)
-        trend_strength = {'bullish': 0, 'bearish': 0, 'neutral': 0}
-        
+        # Trend alignment analysis
+        trend_strength = {'bullish': 0, 'bearish': 0}
         for tf in timeframes:
             ta = timeframe_data[tf]
             if ta['trend_direction'] == "bullish":
                 trend_strength['bullish'] += 1
-            elif ta['trend_direction'] == "bearish":
-                trend_strength['bearish'] += 1
             else:
-                trend_strength['neutral'] += 1
+                trend_strength['bearish'] += 1
         
-        analysis_text += f"🔀 Trend Consensus: Bullish {trend_strength['bullish']}/5, Bearish {trend_strength['bearish']}/5, Neutral {trend_strength['neutral']}/5\n"
+        analysis_text += f"🔀 Trend Consensus: Bullish {trend_strength['bullish']}/5 vs Bearish {trend_strength['bearish']}/5\n"
 
-        # Generate AI recommendations based on trend analysis
+        # Generate AI recommendations
         await update.message.reply_text("🔄 Generating AI recommendations...")
         recommendations = gemini_processor.get_gemini_analysis(analysis_text)
         
@@ -166,14 +192,15 @@ async def analyze_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📈 Final Analysis for {raw_symbol}:
 {recommendations if "⚠️" not in recommendations else "⚠️ Partial Analysis (Verify Manually):\n" + recommendations}
 
-📊 ML-Enhanced Confidence Scores:
-5m: {timeframe_data['5m']['quant_confidence']}%
-1h: {timeframe_data['1h']['quant_confidence']}% 
-1d: {timeframe_data['1d']['quant_confidence']}%
+📊 Confidence Scores:
+│           │ Quantitative │ ML Model │
+├───────────┼──────────────┼──────────┤
+│ 5m       │ {timeframe_data['5m']['quant_confidence']:>5.1f}%     │ {timeframe_data['5m']['ml_confidence']:>5.1f}% │
+│ 1h       │ {timeframe_data['1h']['quant_confidence']:>5.1f}%     │ {timeframe_data['1h']['ml_confidence']:>5.1f}% │ 
+│ 1d       │ {timeframe_data['1d']['quant_confidence']:>5.1f}%     │ {'N/A':^8} │
 
-⚠️ Disclaimer: This is not financial advice. Always do your own research.
-        """
-        
+⚠️ Disclaimer: This is not financial advice.
+"""        
         await update.message.reply_text(final_message)
 
     except BinanceAPIException as e:
@@ -185,6 +212,7 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_coin))
+    app.add_handler(CommandHandler("mlstatus", ml_status))
     
     # Start background training scheduler
     def train_models():
