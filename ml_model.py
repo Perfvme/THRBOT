@@ -141,15 +141,15 @@ class CryptoML:
             proba = self.model.predict_proba(df)[0]
             confidence = float(np.max(proba)*100)
             uncertainty = float((1 - (np.max(proba) - np.min(proba)))*100)
-            
+
             return {
-                'confidence': confidence,
-                'uncertainty': uncertainty,
-                'suggested_width': 0.5 * uncertainty/100 * current_features['atr']
-            }
-        except Exception as e:
-            logging.error(f"Prediction error: {str(e)}")
-            return {'confidence': 50.0, 'uncertainty': 100.0, 'suggested_width': None}
+            'confidence': confidence,
+            'uncertainty': uncertainty,
+            'suggested_width': 0.5 * uncertainty/100 * current_features.get('atr', 0.0)
+        }
+    except Exception as e:
+        logging.error(f"Prediction error: {str(e)}")
+        return {'confidence': 50.0, 'uncertainty': 100.0, 'suggested_width': 0.0}  # Changed None to 0.0
 
     def get_data_counts(self):
         """Get record counts per timeframe"""
